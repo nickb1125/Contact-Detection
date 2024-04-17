@@ -80,16 +80,14 @@ def view_contact(video_array, helmet_mask):
     plt.show()
     plt.close()
 
-def create_boxes_array(frames_data, array_size):
+def create_boxes_array(frames_data, array_size, frames):
     """Creates array of helmet mask boxes from helmet tracking data."""
-    frames = list(set(frames_data.frame))
     boxes_arrays = []
 
     for frame_idx in frames:
         frame_data = frames_data.loc[frames_data.frame == frame_idx][['left', 'top', 'width', 'height']].values
         # Initialize an empty numpy array for the current frame
         boxes_array = np.zeros(array_size, dtype=np.uint8)
-
         for box in frame_data:
             left, top, width, height = box
 
@@ -130,132 +128,65 @@ class ContactDataset:
 
     def __getitem__(self, idx):
         # Organize record info
-        print(idx)
-        contact_info_df = self.record_df.iloc[idx,:].copy()
-        label = int(contact_info_df.contact)
-        game_play = contact_info_df.game_play
-        player_1_id = int(contact_info_df.nfl_player_id_1)
-        if not self.ground:
-            player_2_id = int(contact_info_df.nfl_player_id_2)
-        else:
-            player_2_id = "G"
-        step = contact_info_df.step
+        contact_info_df = self.record_df.iloc[idx,:]
+        label = int(contact_info_df['contact'])
+        game_play = contact_info_df['game_play']
+        player_1_id = int(contact_info_df['nfl_player_id_1'])
+        player_2_id = "G" if self.ground else int(contact_info_df['nfl_player_id_2'])
+        step = contact_info_df['step']
         frame_id = step_to_frame(step)
-        steps = list(range(step-self.num_back_forward_steps*self.skips, 
-                           step+self.num_back_forward_steps*self.skips+1, self.skips))
-        frame_ids = sorted([step_to_frame(x) for x in steps])
-        
-        half_feature_size=int(self.feature_size/2)
+        steps = np.arange(step-self.num_back_forward_steps*self.skips, 
+                        step+self.num_back_forward_steps*self.skips+1, self.skips)
+        frame_ids = np.sort([step_to_frame(x) for x in steps])
+
+        half_feature_size = self.feature_size // 2
 
         # Get distance info (if not ground play)
         if not self.ground:
             p1_row_track = self.tracking_df.query("game_play==@game_play & (step in @steps) & nfl_player_id==@player_1_id")
             p2_row_track = self.tracking_df.query("game_play==@game_play & (step in @steps) & nfl_player_id==@player_2_id")
-            distance = np.sqrt((p1_row_track.x_position.values - p2_row_track.x_position.values)**2 + 
-                            (p1_row_track.y_position.values - p2_row_track.y_position.values)**2)
+            distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
+                            (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
             distance_as_mat = np.stack([np.full((self.feature_size, self.feature_size), x) for x in distance])
+
+        # Get video arrays
+        video_arrays = {}
+        for view in ["Sideline", "Endzone"]:
+            video_array = read_video(id=game_play, view=view, type=self.type)
+            video_arrays[view] = np.mean(video_array[frame_ids,:,:,:], axis=3)
+
+        # Get pixel centerpoint of contact for each view
+        centerpoints = {}
+        for view in ["Sideline", "Endzone"]:
+            helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & (frame in @frame_ids)")
+            helmet_mask_df_view = helmet_mask_df.loc[helmet_mask_df['nfl_player_id'].isin([player_1_id, player_2_id])]
+            if helmet_mask_df_view.empty:
+                centerpoints[view] = (video_arrays[view].shape[1] // 2, video_arrays[view].shape[2] // 2)
+            else:
+                df_this_frame = helmet_mask_df_view.loc[helmet_mask_df_view['frame'] == frame_id]
+                x = np.mean(df_this_frame['left'].values + (df_this_frame['width'].values / 2))
+                y = np.mean(df_this_frame['top'].values - (df_this_frame['height'].values / 2))
+                centerpoints[view] = (int(x) + half_feature_size, int(y) + half_feature_size)
         
-        # Get video array sideline
-        video_array = read_video(id=contact_info_df.game_play, 
-                          view="Sideline", 
-                          type=self.type) 
-        image_side = np.mean(video_array[frame_ids,:,:,:], axis= 3)
-
-        # Get video array endzone
-        video_array = read_video(id=contact_info_df.game_play, 
-                          view="Endzone", 
-                          type=self.type) 
-        image_end = np.mean(video_array[frame_ids,:,:,:], axis= 3)
-
-        # Get pixel centerpoint of contact sideline
-        helmet_mask_df = self.helmets_df.query("view=='Sideline' & game_play==@game_play & (frame in @frame_ids)")
-        helmet_mask_df_side = helmet_mask_df.loc[helmet_mask_df.nfl_player_id.isin([player_1_id, player_2_id])]
-        if set(frame_ids) != set(helmet_mask_df_side.frame):
-            raise IndexError("Missing frames from steps specified. Try reducing step size if possible.")
-        if player_1_id not in [int(x) for x in helmet_mask_df_side.nfl_player_id]:
-            print(idx)
-            print("-----")
-            print("Player 1 not in side view.")
-        if player_2_id not in [int(x) for x in helmet_mask_df_side.nfl_player_id]:
-            print(idx)
-            print("-----")
-            print("Player 2 not in side view.")
-        if helmet_mask_df_side.empty:
-            print(idx)
-            print("-----")
-            print("Neither player in side view.")
-            centerpoint_side = [(image_side.shape[0]/2, image_side.shape[1]/2)] * (self.num_back_forward_steps*2+1)
-        else:
-            df_this_frame=helmet_mask_df_side.loc[helmet_mask_df_side.frame==frame_id]
-            x, y = np.mean(df_this_frame.left.values+(df_this_frame.width.values/2)), np.mean(df_this_frame.top.values-(df_this_frame.height.values/2))
-            centerpoint_side=(int(x) + half_feature_size, int(y) + half_feature_size)
-    
-        # Get pixel centerpoint of contact endzone
-        helmet_mask_df = self.helmets_df.query("view=='Endzone' & game_play==@game_play & (frame in @frame_ids)")
-        helmet_mask_df_end = helmet_mask_df.loc[helmet_mask_df.nfl_player_id.isin([player_1_id, player_2_id])]
-        print(helmet_mask_df_end)
-        if set(frame_ids) != set(helmet_mask_df_end.frame):
-            raise IndexError("Missing frames from steps specified. Try reducing step size if possible.")
-        if player_1_id not in [int(x) for x in helmet_mask_df_end.nfl_player_id]:
-            print(idx)
-            print("-----")
-            print("Player 1 not in end view.")
-        if player_2_id not in [int(x) for x in helmet_mask_df_end.nfl_player_id]:
-            print(idx)
-            print("-----")
-            print("Player 2 not in end view.")
-        if helmet_mask_df_end.empty:
-            print(idx)
-            print("-----")
-            print("Neither player in end view")
-            centerpoint_end = [(int(image_end.shape[1]/2), int(image_end.shape[2]/2))] * (self.num_back_forward_steps*2+1)
-        else:
-            df_this_frame=helmet_mask_df_end.loc[helmet_mask_df_end.frame==frame_id]
-            x, y = np.mean(df_this_frame.left.values+(df_this_frame.width.values/2)), np.mean(df_this_frame.top.values-(df_this_frame.height.values/2))
-            centerpoint_end=(int(x) + half_feature_size, int(y) + half_feature_size)
-
-        # Get helmet mask
-        if helmet_mask_df_side.empty:
-            helmet_mask_frame_side = np.zeros((len(frame_ids), image_side.shape[1], image_side.shape[2]))
-        else:
-            helmet_mask_frame_side = create_boxes_array(helmet_mask_df_side, (image_side.shape[1], image_side.shape[2]))
-        if helmet_mask_df_end.empty:
-            helmet_mask_frame_end = np.zeros((len(frame_ids), image_end.shape[1], image_end.shape[2]))
-        else:
-            helmet_mask_frame_end = create_boxes_array(helmet_mask_df_end, (image_end.shape[1], image_end.shape[2]))
-
-        # Pad images in case of zoom out of bounds
-        pad_width = [(0, 0)] + [(half_feature_size, half_feature_size) for _ in range(2)]
-        image_side=np.pad(image_side, pad_width=pad_width, mode='constant', constant_values=0)
-        image_end=np.pad(image_end, pad_width=pad_width, mode='constant', constant_values=0)
-        helmet_mask_frame_side= np.pad(helmet_mask_frame_side, pad_width=pad_width, mode='constant', constant_values=0)
-        helmet_mask_frame_end= np.pad(helmet_mask_frame_end, pad_width=pad_width, mode='constant', constant_values=0)
-
-        print(centerpoint_side)
-        print(centerpoint_end)
-
-        if self.ground:
-            ret = tuple(np.stack((
-                image_side[timestep, (centerpoint_side[1]-half_feature_size):(centerpoint_side[1]+half_feature_size), 
-                        (centerpoint_side[0]-half_feature_size):(centerpoint_side[0]+half_feature_size)], 
-                helmet_mask_frame_side[timestep, (centerpoint_side[1]-half_feature_size):(centerpoint_side[1]+half_feature_size), 
-                                    (centerpoint_side[0]-half_feature_size):(centerpoint_side[0]+half_feature_size)],
-                image_end[timestep, (centerpoint_end[1]-half_feature_size):(centerpoint_end[1]+half_feature_size), 
-                        (centerpoint_end[0]-half_feature_size):(centerpoint_end[0]+half_feature_size)], 
-                helmet_mask_frame_end[timestep, (centerpoint_end[1]-half_feature_size):(centerpoint_end[1]+half_feature_size), 
-                                    (centerpoint_end[0]-half_feature_size):(centerpoint_end[0]+half_feature_size)]), 
-                                    axis = 2) for timestep in range(len(frame_ids)))
-        else:
-            ret = tuple(np.stack((
-                image_side[timestep, (centerpoint_side[1]-half_feature_size):(centerpoint_side[1]+half_feature_size), 
-                        (centerpoint_side[0]-half_feature_size):(centerpoint_side[0]+half_feature_size)], 
-                helmet_mask_frame_side[timestep, (centerpoint_side[1]-half_feature_size):(centerpoint_side[1]+half_feature_size), 
-                                    (centerpoint_side[0]-half_feature_size):(centerpoint_side[0]+half_feature_size)],
-                image_end[timestep, (centerpoint_end[1]-half_feature_size):(centerpoint_end[1]+half_feature_size), 
-                        (centerpoint_end[0]-half_feature_size):(centerpoint_end[0]+half_feature_size)], 
-                helmet_mask_frame_end[timestep, (centerpoint_end[1]-half_feature_size):(centerpoint_end[1]+half_feature_size), 
-                                    (centerpoint_end[0]-half_feature_size):(centerpoint_end[0]+half_feature_size)],
-                distance_as_mat[timestep, :, :]), axis = 2) for timestep in range(len(frame_ids)))
+        ret = []
+        for timestep in range(len(frame_ids)):
+            timestep_ret = []
+            for view in ["Sideline", "Endzone"]:
+                image = np.pad(video_arrays[view], pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+                helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & (frame in @frame_ids)")
+                helmet_mask_df_view = helmet_mask_df.loc[helmet_mask_df['nfl_player_id'].isin([player_1_id, player_2_id])]
+                helmet_mask_frame = create_boxes_array(helmet_mask_df_view, (image.shape[1], image.shape[2]), frames=frame_ids)
+                helmet_mask_frame = np.pad(helmet_mask_frame, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+                feature = [image[timestep,
+                                        (centerpoints[view][1]-half_feature_size):(centerpoints[view][1]+half_feature_size), 
+                                        (centerpoints[view][0]-half_feature_size):(centerpoints[view][0]+half_feature_size)],
+                           helmet_mask_frame[timestep,
+                                        (centerpoints[view][1]-half_feature_size):(centerpoints[view][1]+half_feature_size), 
+                                        (centerpoints[view][0]-half_feature_size):(centerpoints[view][0]+half_feature_size)]]
+                timestep_ret.extend(feature)
+            if not self.ground:
+                timestep_ret.append(distance_as_mat[timestep, :, :])
+            ret.append(np.stack(timestep_ret, axis = 2))
 
         return tuple(torch.Tensor(feature) for feature in ret), torch.Tensor(label)
 
