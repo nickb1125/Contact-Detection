@@ -116,17 +116,13 @@ class ContactDataset:
             
         self.ground=ground
         if ground:
-            self.pos_class = pd.read_csv(record_df_path).query("nfl_player_id_2 == 'G' & contact == 1").reset_index(drop=1).sample(n=num_per_classification, replace=False, random_state=1)
-            self.neg_class = pd.read_csv(record_df_path).query("nfl_player_id_2 == 'G' & contact == 0").reset_index(drop=1).sample(n=num_per_classification, replace=False, random_state=1)
+            self.record_df = pd.read_csv(record_df_path).query("nfl_player_id_2 == 'G'")
         else:
-            self.pos_class = pd.read_csv(record_df_path).query("nfl_player_id_2 != 'G'  & contact == 1").reset_index(drop=1).sample(n=num_per_classification, replace=False, random_state=1)
-            self.neg_class = pd.read_csv(record_df_path).query("nfl_player_id_2 != 'G'  & contact == 0").reset_index(drop=1).sample(n=num_per_classification, replace=False, random_state=1)
-        self.record_df = pd.concat([self.pos_class, self.neg_class], axis = 0)
+            self.record_df = pd.read_csv(record_df_path).query("nfl_player_id_2 != 'G'")
         if "train" in record_df_path:
             self.type = "train"
         else:
             self.type = "test"
-        print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
 
         self.tracking_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_player_tracking.csv")
         self.helmets_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
@@ -134,6 +130,7 @@ class ContactDataset:
         self.skips=skips
         self.num_back_forward_steps=num_back_forward_steps
         self.distance_cutoff = distance_cutoff
+        self.cache=dict()
 
         if not self.ground:
             # Filter to only plays with cutoff distance (others will be assigned 0 contact prob)
@@ -160,11 +157,19 @@ class ContactDataset:
             merge_p1['distance']=(merge_p1.x_position_1.astype(float)-merge_p1.x_position_2.astype(float))**2+(merge_p1.y_position_1.astype(float)-merge_p1.y_position_2.astype(float))**2
             merge_p1 = merge_p1.loc[merge_p1.distance < self.distance_cutoff]
             self.record_df = self.record_df.loc[self.record_df.contact_id.isin(merge_p1.contact_id)]
+        
+        # Filter to balanced sample
+        if not self.type == "test":
+            self.pos_class = self.record_df.query("contact == 1").sample(n=num_per_classification, replace=False, random_state=1).reset_index(drop=1)
+            self.neg_class = self.record_df.query("contact == 0").sample(n=num_per_classification, replace=False, random_state=1).reset_index(drop=1)
+            self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
+            print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
 
 
     def __getitem__(self, idx):
         # Organize record info
-
+        if idx in self.cache.keys():
+            return self.cache[idx]
         contact_info_df = self.record_df.iloc[idx,:]
         label = int(contact_info_df['contact'])
         game_play = contact_info_df['game_play']
@@ -197,7 +202,14 @@ class ContactDataset:
         i=0
         for view in ["Sideline", "Endzone"]:
             # Video array
-            raw_frames=read_video(id=game_play, view=view, type=self.type, cache=cache)[frame_ids, :, :]
+            returned_array = read_video(id=game_play, view=view, type=self.type, cache=cache)
+            
+            # If requested frames out of range return empty
+            valid_frame_index = np.where(np.logical_and(frame_ids >= 0, frame_ids < returned_array.shape[0]))
+            raw_frames = np.zeros((len(frame_ids),) + returned_array.shape[1:], dtype=returned_array.dtype)
+            raw_frames[valid_frame_index] = returned_array[frame_ids[valid_frame_index]]
+
+            # Pad
             dim_1, dim_2=raw_frames.shape[1], raw_frames.shape[2]
             raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
             
@@ -229,8 +241,9 @@ class ContactDataset:
         if not self.ground:
             feature.append(distance_as_mat)
         feature_array = np.concatenate(feature, axis = 0) # Channel, Time, H, W
-
-        return tuple(torch.Tensor(feature_array[:, timestep, :, :]) for timestep in range(feature_array.shape[1])), torch.Tensor([label])
+        ret = (tuple(torch.Tensor(feature_array[:, timestep, :, :]) for timestep in range(feature_array.shape[1])), torch.Tensor([label]))
+        self.cache.update({idx : ret})
+        return ret
 
     def __len__(self):
         return len(self.record_df)
