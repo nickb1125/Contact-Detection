@@ -15,6 +15,7 @@ from models import Encoder, ContactNet
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
 
 # srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
 
