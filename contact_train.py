@@ -53,8 +53,6 @@ dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_labe
 print(f"-----Caching train features and labels-----")
 for index, row in tqdm(dataset.record_df.iterrows(), total=dataset.record_df.shape[0]):
     load=dataset[index] # Caches info internally in dataset object
-    cache_size = (sys.getsizeof(dataset.cache) + sys.getsizeof(helmet_cache) + sys.getsizeof(cacher)) / 1e+9
-    print("Size of the object:", cache_size, "gigs")
 dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 
@@ -65,8 +63,6 @@ test_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train
 print(f"-----Caching test features and labels-----")
 for index, row in tqdm(test_dataset.record_df.iterrows(), total=test_dataset.record_df.shape[0]):
     load=test_dataset[index] # Caches info internally in dataset object
-    #cache_size = (sys.getsizeof(test_dataset.cache) + sys.getsizeof(helmet_cache) + sys.getsizeof(cacher)) / 1e+9
-    #print("Size of the object:", cache_size, "gigs")
 test_dataloader = DataLoader(test_dataset, batch_size=256, shuffle=True)
 
 
