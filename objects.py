@@ -21,7 +21,7 @@ class VideoDataset(torch.utils.data.Dataset): # Note: This is not for contact cl
             self.type = "train"
         else:
             self.type = "test"
-        self.helmets_df = pd.read_csv(f"/Users/nickbachelder/Desktop/Personal Code/Kaggle/Contact/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
+        self.helmets_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
 
     def __getitem__(self, idx):
         this_id  = self.unique_ids[idx]
@@ -128,8 +128,8 @@ class ContactDataset:
             self.type = "test"
         print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
 
-        self.tracking_df = pd.read_csv(f"/Users/nickbachelder/Desktop/Personal Code/Kaggle/Contact/nfl-player-contact-detection/{self.type}_player_tracking.csv")
-        self.helmets_df = pd.read_csv(f"/Users/nickbachelder/Desktop/Personal Code/Kaggle/Contact/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
+        self.tracking_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_player_tracking.csv")
+        self.helmets_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
         self.feature_size = feature_size
         self.skips=skips
         self.num_back_forward_steps=num_back_forward_steps

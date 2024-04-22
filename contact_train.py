@@ -16,9 +16,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+if torch.cuda.is_available():
+    device = torch.device("cuda")  # Use GPU
+    print("CUDA is available! Using GPU.")
+else:
+    device = torch.device("cpu")  # Use CPU
+    print("CUDA is not available. Using CPU.")
 
 print("---Loading Train Dataloader----")
-dataset = ContactDataset("/Users/nickbachelder/Desktop/Personal Code/Kaggle/Contact/nfl-player-contact-detection/train_labels.csv",
+dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv",
                       ground=False, feature_size=256, num_back_forward_steps=1, skips=1, distance_cutoff=5, num_per_classification=1000)
 dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
@@ -32,7 +38,6 @@ num_epochs = 10
 
 print("---Initializing Model----")
 combined_model = ContactNet(image_size, input_size, hidden_size, num_layers, dropout)
-device = torch.device('cpu')
 combined_model.to(device)
 criterion = nn.BCELoss()  # Binary Cross Entropy Loss for binary classification
 optimizer = optim.Adam(combined_model.parameters(), lr=learning_rate)
@@ -46,8 +51,7 @@ for epoch in range(num_epochs):
     for batch_idx, (features, labels) in enumerate(dataloader):
         print(f"Batch {batch_idx}")
         x1, x2, x3, x4, x5 = features
-        print(x1.shape)
-        print(labels)
+        x1, x2, x3, x4, x5, labels = x1.to(device), x2.to(device), x3.to(device), x4.to(device), x5.to(device), labels.to(device)
         # Forward pass
         outputs = combined_model(x1, x2, x3, x4, x5)
         loss = criterion(outputs.squeeze(), labels.float())  # Compute loss
