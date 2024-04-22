@@ -11,10 +11,12 @@ import torchvision.transforms as transforms
 import torch.optim as optim
 from tqdm import tqdm
 from objects import step_to_frame, create_boxes_dict, ContactDataset
-from models import Encoder, LSTMModel, ContactNet
+from models import Encoder, ContactNet
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
 
 
 ############ SETTINGS #################
