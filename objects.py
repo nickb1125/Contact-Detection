@@ -5,67 +5,36 @@ import matplotlib.pyplot as plt
 import os
 import torch
 import time
+from tqdm import tqdm
 
-cache=dict()
-helmet_cache=dict()
-
-class VideoDataset(torch.utils.data.Dataset): # Note: This is not for contact classification, but for future work on limb tracking
-    """Dataset for all videos and helmet masks from train or test directory."""
-    def __init__(self, path_to_npy_files):
-        self.video_files = os.listdir(path_to_npy_files)
-        self.base_path = path_to_npy_files
-        self.unique_ids = list(set(map(lambda s : s.split("_")[0] + "_" +
-            s.split("_")[1], 
-            self.video_files)))
-        if "train" in path_to_npy_files:
-            self.type = "train"
-        else:
-            self.type = "test"
-        self.helmets_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
-
-    def __getitem__(self, idx):
-        this_id  = self.unique_ids[idx]
-
-        # Get video array all frame
-        video = read_video(id=this_id, view="Sideline", type=self.type, cache=cache) # Returns np array
-        return video   
-
-    def __len__(self):
-        return len(self.unique_ids)
-    
 def step_to_frame(step):
     return int(step/10*59.95+5*59.95)
     
-def read_video(id, view, type, cache):
+def read_video(id, view, type):
     """Reads video to numpy array using Open-CV"""
     
     filepath = f"nfl-player-contact-detection/{type}/{id}_{view}.mp4"
-    if filepath not in cache:
-        # Open the video file
-        cap = cv2.VideoCapture(filepath)
-        
-        # Get video properties
-        num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        
-        # Initialize an empty numpy array to store the frames
-        video_array = np.empty((num_frames, height, width), dtype=np.uint8)
-        
-        # Loop through each frame and store it in the numpy array
-        for i in range(num_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            video_array[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
-            
-        # Release the video object
-        cap.release()
-        
-        # Update cache
-        cache[filepath] = video_array
+    # Open the video file
+    cap = cv2.VideoCapture(filepath)
     
-    return cache[filepath]
+    # Get video properties
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    
+    # Initialize an empty numpy array to store the frames
+    video_array = np.empty((num_frames, height, width), dtype=np.uint8)
+    
+    # Loop through each frame and store it in the numpy array
+    for i in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        video_array[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+        
+    # Release the video object
+    cap.release()
+    return video_array
 
 def view_contact(video_array, helmet_mask):
     """Plots contact with helmet mask."""
@@ -74,37 +43,28 @@ def view_contact(video_array, helmet_mask):
     plt.show()
     plt.close()
 
-def create_boxes_dict(id, view, array_size, helmet_df, player_id, frames, cache):
+def create_boxes_dict(id, view, array_size, helmet_df, player_id, frames):
     """Creates array of helmet mask boxes from helmet tracking data."""
-    dict_key = f"{id}_{view}_{player_id}"
-    if dict_key not in cache:
-        cache[dict_key] = {}
-
     # Query the DataFrame once for all frames
+    player_id=int(player_id)
     frame_data = helmet_df.query("view==@view & game_play==@id & nfl_player_id==@player_id")
-    frame_data = frame_data.set_index('frame')
-
-    frames_array = []
+    frames_dict = dict()
     for frame_idx in frames:
-        if frame_idx not in cache[dict_key]:
-            if frame_idx in frame_data.index:
-                left, top, width, height = frame_data.loc[frame_idx, ['left', 'top', 'width', 'height']]
+        if frame_idx in frame_data.frame.values:
+            left, top, width, height = frame_data.loc[frame_data.frame==frame_idx, ['left', 'top', 'width', 'height']].reset_index(drop=1).iloc[0,]
+            # Ensure box coordinates are within the array bounds
+            left = max(0, left)
+            top = max(0, top)
+            right = min(array_size[1], left + width)
+            bottom = min(array_size[0], top + height)
 
-                # Ensure box coordinates are within the array bounds
-                left = max(0, left)
-                top = max(0, top)
-                right = min(array_size[1], left + width)
-                bottom = min(array_size[0], top + height)
-
-                # Mark the region of the box in the numpy array
-                boxes_array = np.zeros(array_size, dtype=np.uint8)
-                boxes_array[top:bottom, left:right] = 255
-            else:
-                boxes_array = np.zeros(array_size, dtype=np.uint8)
-            cache[dict_key][frame_idx] = boxes_array
-        frames_array.append(cache[dict_key][frame_idx])
-
-    return np.stack(frames_array, axis=0)
+            # Mark the region of the box in the numpy array
+            boxes_array = np.zeros(array_size, dtype=np.uint8)
+            boxes_array[top:bottom, left:right] = 255
+        else:
+            boxes_array = np.zeros(array_size, dtype=np.uint8)
+        frames_dict.update({frame_idx : boxes_array})
+    return frames_dict
 
 class ContactDataset:
     """Dataset for training and testing zoomed contact examples."""
@@ -157,6 +117,7 @@ class ContactDataset:
             merge_p1['distance']=(merge_p1.x_position_1.astype(float)-merge_p1.x_position_2.astype(float))**2+(merge_p1.y_position_1.astype(float)-merge_p1.y_position_2.astype(float))**2
             merge_p1 = merge_p1.loc[merge_p1.distance < self.distance_cutoff]
             self.record_df = self.record_df.loc[self.record_df.contact_id.isin(merge_p1.contact_id)]
+            self.record_df['frame'] = list(map(step_to_frame, self.record_df.step))
         
         # Filter to balanced sample
         if not self.type == "test":
@@ -165,12 +126,37 @@ class ContactDataset:
             self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
 
-
-    def __getitem__(self, idx):
-        # Organize record info
-        if idx in self.cache.keys():
-            return self.cache[idx]
-        contact_info_df = self.record_df.iloc[idx,:]
+    @property
+    def _cache_all_features(self):
+        """Caches all observation features using in order of play groups for memory & speed productive load."""
+        unique_plays=self.record_df.game_play.unique()
+        unique_observations=self.record_df.contact_id.unique()
+        print(f"----Features being extracted for {len(unique_plays)} plays and {len(unique_observations)} potential contacts-----")
+        for play_id in tqdm(self.record_df.game_play.unique()):
+            helmet_df_subset = self.helmets_df.loc[self.helmets_df.game_play==play_id]
+            record_df_subset = self.record_df.loc[self.record_df.game_play==play_id]
+            # Cache Videos
+            video_cache = {x : read_video(id=play_id, view=x, type=self.type) for x in ["Sideline", 'Endzone']}
+            # Cache Player Boxes By Frame (index by view, player, frame)
+            box_cache = dict({view : {} for view in ["Sideline", "Endzone"]})
+            for player_id in set(record_df_subset.nfl_player_id_1).union(set(record_df_subset.nfl_player_id_2)):
+                player_relevant_steps_base = set(record_df_subset.loc[(player_id == record_df_subset.nfl_player_id_1) | 
+                                                                           (player_id == record_df_subset.nfl_player_id_2), 'step'])
+                relevant_steps = np.concatenate([np.arange(x-self.num_back_forward_steps*self.skips, 
+                                                        x+self.num_back_forward_steps*self.skips+1, 
+                                                        self.skips) for x in player_relevant_steps_base])
+                player_relevant_steps= player_relevant_steps_base.union(relevant_steps)
+                player_relevant_frames=np.sort([step_to_frame(x) for x in player_relevant_steps])
+                for view in ["Sideline", "Endzone"]:
+                    box_cache[view].update({int(player_id) : create_boxes_dict(id=play_id, view=view, 
+                                                             array_size=(video_cache[view].shape[1], video_cache[view].shape[2]), 
+                                                             helmet_df=helmet_df_subset, player_id=player_id, 
+                                                             frames=player_relevant_frames)})
+            for index, contact_info_df in record_df_subset.iterrows():
+                self.cache.update({index : self.get_features(contact_info_df, video_cache=video_cache, box_cache=box_cache)})   
+            
+    def get_features(self, contact_info_df, video_cache=None, box_cache=None):
+        """Gets features from single row of records df."""
         label = int(contact_info_df['contact'])
         game_play = contact_info_df['game_play']
         player_1_id = int(contact_info_df['nfl_player_id_1'])
@@ -202,7 +188,10 @@ class ContactDataset:
         i=0
         for view in ["Sideline", "Endzone"]:
             # Video array
-            returned_array = read_video(id=game_play, view=view, type=self.type, cache=cache)
+            if video_cache is not None:
+                returned_array = video_cache[view]
+            else:
+                returned_array = read_video(id=game_play, view=view, type=self.type)
             
             # If requested frames out of range return empty
             valid_frame_index = np.where(np.logical_and(frame_ids >= 0, frame_ids < returned_array.shape[0]))
@@ -214,13 +203,20 @@ class ContactDataset:
             raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
             
             # Helmet masks
-            helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                        helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids, cache=helmet_cache)
-            helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                        helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids, cache=helmet_cache)
-            
-            helmet_mask_frames = helmet_mask_player_1_dict + helmet_mask_player_2_dict
+            if box_cache is not None:
+                helmet_mask_player_1_dict = box_cache[view][player_1_id]
+                helmet_mask_player_2_dict = box_cache[view][player_2_id]
+            else:
+                helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                            helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids, cache=helmet_cache)
+                helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                            helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids, cache=helmet_cache)
+                
+            helmet_masks_player_1 = np.stack([helmet_mask_player_1_dict[frame_id] for frame_id in frame_ids])
+            helmet_masks_player_2 = np.stack([helmet_mask_player_2_dict[frame_id] for frame_id in frame_ids])  
+            helmet_mask_frames = helmet_masks_player_1 + helmet_masks_player_2
             helmet_mask_frames = np.pad(helmet_mask_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+            
             # Centerpoints & Zoom
             helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & frame==@frame_id")
             df_this_frame = helmet_mask_df.loc[helmet_mask_df['nfl_player_id'].isin([player_1_id, player_2_id])]
@@ -242,8 +238,15 @@ class ContactDataset:
             feature.append(distance_as_mat)
         feature_array = np.concatenate(feature, axis = 0) # Channel, Time, H, W
         ret = (tuple(torch.Tensor(feature_array[:, timestep, :, :]) for timestep in range(feature_array.shape[1])), torch.Tensor([label]))
-        self.cache.update({idx : ret})
         return ret
+
+    def __getitem__(self, idx):
+        # Organize record info
+        if idx in self.cache.keys():
+            return self.cache[idx]
+        contact_info_df = self.record_df.iloc[idx,:]
+        self.cache.update({idx : self.get_features(contact_info_df)}) 
+        return self.cache[idx]
 
     def __len__(self):
         return len(self.record_df)
