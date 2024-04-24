@@ -7,7 +7,7 @@ class Encoder(nn.Module):
     def __init__(self, image_size):
         super(Encoder, self).__init__()
         self.conv1 = nn.Conv2d(5, 3, kernel_size=3, stride=1, padding=1)
-        self.resnet= models.resnet18(weights=models.ResNet50_Weights.DEFAULT)
+        self.resnet= models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         self.fc = nn.Linear(1000, 100)
 
     def forward(self, x):
