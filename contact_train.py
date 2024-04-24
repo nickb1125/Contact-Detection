@@ -45,7 +45,9 @@ num_epochs = 10
 
 #### Train test splits #####
 
-# Manufacture test record datsset
+print("----Initiating Train/Validation Splits------")
+
+# Manufacture test record dataset
 
 test_info=pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/sample_submission.csv")
 test_info["game_play"] = list(map(lambda text: text.split("_")[0] + "_" + text.split("_")[1], test_info["contact_id"]))
@@ -144,3 +146,6 @@ for epoch in range(num_epochs):
 
         average_loss = total_loss / total_samples
         print(f'Validation - Epoch [{epoch+1}/{num_epochs}], Average Loss: {average_loss:.4f}')
+
+os.makedirs(os.getcwd() + "/models", exist_ok=True)
+torch.save(combined_model.state_dict(), os.getcwd() + '/models/contact_model.pth')
