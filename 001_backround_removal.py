@@ -72,7 +72,7 @@ for filepath in tqdm(all_file_paths):
     video_writer = cv2.VideoWriter(output_file_path, fourcc, fps, frame_size)
 
     # Loop through each frame and store it in the numpy array
-    for i in tqdm(range(num_frames)):
+    for i in range(num_frames):
         ret, frame = cap.read()
         if not ret:
             break
