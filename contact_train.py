@@ -17,6 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import sys
 from sklearn.model_selection import train_test_split
+from transformers import AutoModelForImageSegmentation
+from torchvision.transforms.functional import normalize
 
 # srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
 
@@ -41,6 +43,7 @@ num_epochs = 10
 
 #######################################
 
+#### Train test splits #####
 
 # Manufacture test record datsset
 
@@ -57,18 +60,26 @@ test_info.to_csv(os.getcwd() + "/nfl-player-contact-detection/test_labels.csv")
 train_val_labels = pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv")
 train_df, val_df = train_test_split(train_val_labels, test_size=0.2, random_state=42)
 train_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv")
-val_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/val_only_labels.csv")
+val_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv")
 
 
-# Connect to device 
+###### Load hugging face backround removal model 
+
+print("---Loading Backround Removal Pretrained Model----")
+backround_model = AutoModelForImageSegmentation.from_pretrained("briaai/RMBG-1.4",trust_remote_code=True)
+
+
+###### Connect to device 
 
 if torch.cuda.is_available():
     device = torch.device("cuda")  # Use GPU
     print("CUDA is available! Using GPU.")
-    cuda.init()
+    torch.cuda.init()
 else:
     device = torch.device("cpu")  # Use CPU
     print("CUDA is not available. Using CPU.")
+
+backround_model.to(device)
 
 print("---Loading Train Dataloader----")
 dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv",
@@ -79,8 +90,8 @@ dataset._cache_all_features
 dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 
-print("---Loading Test Dataloader----")
-val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/val_only_labels.csv",
+print("---Loading Val Dataloader----")
+val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv",
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
 print(f"-----Caching test features and labels-----")

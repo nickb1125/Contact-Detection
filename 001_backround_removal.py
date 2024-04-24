@@ -32,7 +32,7 @@ backround_removal_model = AutoModelForImageSegmentation.from_pretrained("briaai/
 if torch.cuda.is_available():
     device = torch.device("cuda")  # Use GPU
     print("CUDA is available! Using GPU.")
-    cuda.init()
+    torch.cuda.init()
 else:
     device = torch.device("cpu")  # Use CPU
     print("CUDA is not available. Using CPU.")
