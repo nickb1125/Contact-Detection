@@ -29,7 +29,7 @@ feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
 skips = 1 # How many steps between time steps
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
-N = 100 # Number per contact label for balanced training sample
+N = 1000 # Number per contact label for balanced training sample
 positive_allocation_rate = 0.3
 
 
