@@ -6,6 +6,7 @@ import os
 import torch
 import time
 from tqdm import tqdm
+import torchvision.transforms as transforms
 
 def step_to_frame(step):
     return int(step/10*59.95+5*59.95)
@@ -72,7 +73,7 @@ class ContactDataset:
     # TO DO: Cross validate image size, add multiple frames per play, cross validate how many plays back forward, cross val skips
 
     def __init__(self, record_df_path, ground = False, feature_size=256, num_back_forward_steps=2, skips=1, distance_cutoff=5,
-                num_per_classification=10000):
+                N=10000, pos_balance = 0.5):
             
         self.ground=ground
         if ground:
@@ -123,8 +124,8 @@ class ContactDataset:
         
         # Filter to balanced sample
         if not self.type == "test":
-            self.pos_class = self.record_df.query("contact == 1").sample(n=num_per_classification, replace=False, random_state=1).reset_index(drop=1)
-            self.neg_class = self.record_df.query("contact == 0").sample(n=num_per_classification, replace=False, random_state=1).reset_index(drop=1)
+            self.pos_class = self.record_df.query("contact == 1").sample(n=int(N*pos_balance), replace=False, random_state=1).reset_index(drop=1)
+            self.neg_class = self.record_df.query("contact == 0").sample(n=int(N*(1-pos_balance)), replace=False, random_state=1).reset_index(drop=1)
             self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
 
@@ -187,7 +188,7 @@ class ContactDataset:
             distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
                             (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
             if len(distance) != len(steps):
-                found_index=p1_row_track.steps-min(steps)
+                found_index=p1_row_track.step.values-min(steps)
                 fixed = np.zeros(len(steps))
                 fixed[found_index] = distance
                 distance=fixed.copy()
@@ -269,3 +270,11 @@ class ContactDataset:
 
     def __len__(self):
         return len(self.record_df)
+    
+#### NEED TO IMPLIMENT TRANSOFRMS FOR 5 CHANNEL IMAGE 
+tfms = transforms.Compose([
+    transforms.RandomResizedCrop(224),  # Randomly crop the image and resize to 224x224
+            transforms.RandomHorizontalFlip(),  # Randomly flip the image horizontally
+            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),  # Randomly adjust brightness, contrast, saturation, and hue
+            transforms.RandomRotation(degrees=30)
+])

@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import sys
+from sklearn.model_selection import train_test_split
 
 # srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
 
@@ -26,7 +27,8 @@ feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
 skips = 1 # How many steps between time steps
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
-num_per_classification = 1000 # Number per contact label for balanced training sample
+N = 100 # Number per contact label for balanced training sample
+positive_allocation_rate = 0.3
 
 
 image_size = feature_size
@@ -39,6 +41,27 @@ num_epochs = 10
 
 #######################################
 
+
+# Manufacture test record datsset
+
+test_info=pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/sample_submission.csv")
+test_info["game_play"] = list(map(lambda text: text.split("_")[0] + "_" + text.split("_")[1], test_info["contact_id"]))
+test_info["step"] = list(map(lambda text: text.split("_")[2], test_info["contact_id"]))
+test_info["nfl_player_id_1"] = list(map(lambda text: text.split("_")[3], test_info["contact_id"]))
+test_info["nfl_player_id_2"] = list(map(lambda text: text.split("_")[4], test_info["contact_id"]))
+test_info["contact"]=np.NaN
+test_info.to_csv(os.getcwd() + "/nfl-player-contact-detection/test_labels.csv")
+
+# Manufacture and split train labels from val labels
+
+train_val_labels = pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv")
+train_df, val_df = train_test_split(train_val_labels, test_size=0.2, random_state=42)
+train_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv")
+val_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/val_only_labels.csv")
+
+
+# Connect to device 
+
 if torch.cuda.is_available():
     device = torch.device("cuda")  # Use GPU
     print("CUDA is available! Using GPU.")
@@ -48,23 +71,21 @@ else:
     print("CUDA is not available. Using CPU.")
 
 print("---Loading Train Dataloader----")
-dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv",
+dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv",
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
-                      skips=skips, distance_cutoff=distance_cutoff, num_per_classification=num_per_classification)
+                      skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
 print(f"-----Caching train features and labels-----")
-for index, row in tqdm(dataset.record_df.iterrows(), total=dataset.record_df.shape[0]):
-    load=dataset[index] # Caches info internally in dataset object
+dataset._cache_all_features
 dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 
 print("---Loading Test Dataloader----")
-test_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv",
+val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/val_only_labels.csv",
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
-                      skips=skips, distance_cutoff=distance_cutoff, num_per_classification=num_per_classification)
+                      skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
 print(f"-----Caching test features and labels-----")
-for index, row in tqdm(test_dataset.record_df.iterrows(), total=test_dataset.record_df.shape[0]):
-    load=test_dataset[index] # Caches info internally in dataset object
-test_dataloader = DataLoader(test_dataset, batch_size=256, shuffle=True)
+val_dataset._cache_all_features
+val_dataloader = DataLoader(val_dataset, batch_size=256, shuffle=True)
 
 
 print("---Initializing Model----")
@@ -100,7 +121,7 @@ for epoch in range(num_epochs):
     with torch.no_grad():
         total_loss = 0
         total_samples = 0
-        for batch_idx, (test_features, test_labels) in enumerate(test_dataloader):
+        for batch_idx, (test_features, test_labels) in enumerate(val_dataloader):
             x1_test, x2_test, x3_test = test_features
             # Forward pass
             outputs_test = combined_model(x1_test, x2_test, x3_test)
