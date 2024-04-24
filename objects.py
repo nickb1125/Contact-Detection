@@ -186,6 +186,11 @@ class ContactDataset:
                                                 (self.tracking_df.nfl_player_id==player_2_id)]
             distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
                             (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
+            if len(distance) != len(steps):
+                found_index=p1_row_track.steps-min(steps)
+                fixed = np.zeros(len(steps))
+                fixed[found_index] = distance
+                distance=fixed.copy()
             distance_as_mat = np.full((1, len(distance), self.feature_size, self.feature_size), distance[:, None, None])
 
         # Get video arrays and helmet masks
