@@ -1,36 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import models
 
 class Encoder(nn.Module):
     def __init__(self, image_size):
         super(Encoder, self).__init__()
         self.conv1 = nn.Conv2d(5, 3, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(3, 2, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(2, 1, kernel_size=3, stride=1, padding=1)
-        
-        # Calculate the size of the fully connected layer dynamically based on the input image size
-        conv_output_size = self._get_conv_output_size(image_size)
-        self.fc = nn.Linear(conv_output_size, 100)
+        self.resnet= models.resnet18(weights=models.ResNet50_Weights.DEFAULT)
+        self.fc = nn.Linear(1000, 100)
 
     def forward(self, x):
         x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
+        x = torch.relu(self.resnet(x))
+        x = torch.relu(self.fc(x))
         x = x.view(x.size(0), -1)
-        x = self.fc(x)
         return x
-
-    def _get_conv_output_size(self, image_size):
-        # Assuming the input image size is image_size x image_size
-        # Calculate the output size after passing through convolutional layers
-        with torch.no_grad():
-            x = torch.zeros(1, 5, image_size, image_size)
-            x = self.conv1(x)
-            x = self.conv2(x)
-            x = self.conv3(x)
-            conv_output_size = x.view(x.size(0), -1).size(1)
-        return conv_output_size
 
 class ContactNet(nn.Module):
     def __init__(self, image_size, input_size, hidden_size, num_layers, dropout=0.1):
