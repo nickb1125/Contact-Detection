@@ -38,6 +38,11 @@ else:
     print("CUDA is not available. Using CPU.")
 backround_removal_model.to(device)
 
+# Make save directories if needed
+
+os.makedirs(os.getcwd() + "/nfl-player-contact-detection/train/backround_removal", exist_ok=True)
+os.makedirs(os.getcwd() + "/nfl-player-contact-detection/test/backround_removal", exist_ok=True)
+
 # Get video save options
 
 print("------Saving Backround Removed Copies---")
