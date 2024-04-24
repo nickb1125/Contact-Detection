@@ -47,15 +47,6 @@ num_epochs = 10
 
 print("----Initiating Train/Validation Splits------")
 
-# Manufacture test record dataset
-
-test_info=pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/sample_submission.csv")
-test_info["game_play"] = list(map(lambda text: text.split("_")[0] + "_" + text.split("_")[1], test_info["contact_id"]))
-test_info["step"] = list(map(lambda text: text.split("_")[2], test_info["contact_id"]))
-test_info["nfl_player_id_1"] = list(map(lambda text: text.split("_")[3], test_info["contact_id"]))
-test_info["nfl_player_id_2"] = list(map(lambda text: text.split("_")[4], test_info["contact_id"]))
-test_info["contact"]=np.NaN
-test_info.to_csv(os.getcwd() + "/nfl-player-contact-detection/test_labels.csv")
 
 # Manufacture and split train labels from val labels
 
@@ -63,6 +54,8 @@ train_val_labels = pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/trai
 train_df, val_df = train_test_split(train_val_labels, test_size=0.2, random_state=42)
 train_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv")
 val_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv")
+
+print(f"Training on {len(train_df)} observations. Validating with {len(val_df)} observations")
 
 
 ###### Load hugging face backround removal model 
