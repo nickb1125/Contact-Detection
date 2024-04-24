@@ -40,6 +40,7 @@ num_layers = 2 # Number of lstm layers
 dropout = 0.1
 learning_rate = 0.001
 num_epochs = 10
+val_size=0.2
 
 #######################################
 
@@ -51,12 +52,9 @@ print("----Initiating Train/Validation Splits------")
 # Manufacture and split train labels from val labels
 
 train_val_labels = pd.read_csv(os.getcwd() + "/nfl-player-contact-detection/train_labels.csv")
-train_df, val_df = train_test_split(train_val_labels, test_size=0.2, random_state=42)
+train_df, val_df = train_test_split(train_val_labels, test_size=val_size, random_state=42)
 train_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv")
 val_df.to_csv(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv")
-
-print(f"Training on {len(train_df)} observations. Validating with {len(val_df)} observations")
-
 
 ###### Load hugging face backround removal model 
 
@@ -88,7 +86,7 @@ dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 print("---Loading Val Dataloader----")
 val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv",
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
-                      skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
+                      skips=skips, distance_cutoff=distance_cutoff, N=N*val_size, pos_balance=positive_allocation_rate)
 print(f"-----Caching test features and labels-----")
 val_dataset._cache_all_features
 val_dataloader = DataLoader(val_dataset, batch_size=256, shuffle=True)
