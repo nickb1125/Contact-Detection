@@ -105,7 +105,7 @@ class ContactDataset:
     # TO DO: Cross validate image size, add multiple frames per play, cross validate how many plays back forward, cross val skips
 
     def __init__(self, record_df_path, ground = False, feature_size=256, num_back_forward_steps=2, skips=1, distance_cutoff=5,
-                N=10000, pos_balance = 0.5, backround_removal_model=None):
+                N=10000, pos_balance = 0.5, backround_removal=False):
             
         self.ground=ground
         if ground:
@@ -124,7 +124,7 @@ class ContactDataset:
         self.num_back_forward_steps=num_back_forward_steps
         self.distance_cutoff = distance_cutoff
         self.cache=dict()
-        self.backround_removal_model=backround_removal_model
+        self.backround_removal=backround_removal
 
         if not self.ground:
             # Filter to only plays with cutoff distance (others will be assigned 0 contact prob)
@@ -176,7 +176,7 @@ class ContactDataset:
             helmet_df_subset = self.helmets_df.loc[self.helmets_df.game_play==play_id]
             record_df_subset = self.record_df.loc[self.record_df.game_play==play_id]
             # Cache Videos
-            video_cache = {x : read_video(id=play_id, view=x, type=self.type, backround_removal_model=self.backround_removal_model) for x in ["Sideline", 'Endzone']}
+            video_cache = {x : read_video(id=play_id, view=x, type=self.type, backround_removal=self.backround_removal) for x in ["Sideline", 'Endzone']}
             # Cache Player Boxes By Frame (index by view, player, frame)
             box_cache = dict({view : {} for view in ["Sideline", "Endzone"]})
             for player_id in set(record_df_subset.nfl_player_id_1).union(set(record_df_subset.nfl_player_id_2)):
@@ -237,7 +237,7 @@ class ContactDataset:
             if video_cache is not None:
                 returned_array = video_cache[view]
             else:
-                returned_array = read_video(id=game_play, view=view, type=self.type, backround_removal_model=self.backround_removal_model)
+                returned_array = read_video(id=game_play, view=view, type=self.type, backround_removal=self.backround_removal)
             
             # If requested frames out of range return empty
             valid_frame_index = np.where(np.logical_and(frame_ids >= 0, frame_ids < returned_array.shape[0]))
