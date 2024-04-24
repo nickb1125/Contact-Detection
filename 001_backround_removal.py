@@ -65,9 +65,9 @@ for filepath in tqdm(all_file_paths):
     # Get information for save
     base = filepath.split("/")[-1]
     if "train" in filepath:
-        output_file_path = os.getcwd() + "/nfl-player-contact-detection/train/backround_removal/{base}.mp4"
+        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/train/backround_removal/{base}.mp4"
     else:
-        output_file_path = os.getcwd() + "/nfl-player-contact-detection/test/backround_removal/{base}.mp4"
+        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/test/backround_removal/{base}.mp4"
     frame_size = (width, height)  # Use the same frame size as the original video
     video_writer = cv2.VideoWriter(output_file_path, fourcc, fps, frame_size)
 
