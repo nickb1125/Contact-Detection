@@ -13,7 +13,7 @@ from itertools import chain
 
 ####### SETTING #######
 
-backround_remove=False
+backround_remove=True
 
 ####################
 
