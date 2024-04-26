@@ -39,7 +39,7 @@ def postprocess_image(result: torch.Tensor, im_size: list)-> np.ndarray:
 ### For convolutional auto-encoder
 
 def step_to_frame(step):
-    return int(step/10*59.95+5*59.95)
+    return int(int(step)/10*59.95+5*59.95)
     
 def read_video(id, view, type, backround_removal=False):
     """Reads video to numpy array using Open-CV"""
