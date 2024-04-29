@@ -132,6 +132,7 @@ class ContactDataset:
         self.distance_cutoff = distance_cutoff
         self.cache=dict()
         self.backround_removal=backround_removal
+        self.half_feature_size = self.feature_size // 2
 
         if not self.ground:
             # Filter to only plays with cutoff distance (others will be assigned 0 contact prob)
@@ -182,8 +183,6 @@ class ContactDataset:
                         step+self.num_back_forward_steps*self.skips+1, self.skips)
         frame_ids = np.sort([step_to_frame(x) for x in steps])
 
-        half_feature_size = self.feature_size // 2
-
         # Get distance info (if not ground play)
         if not self.ground:
             p1_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
@@ -213,7 +212,7 @@ class ContactDataset:
 
             # Pad
             dim_1, dim_2=raw_frames.shape[1], raw_frames.shape[2]
-            raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+            raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(self.half_feature_size, self.half_feature_size)] * 2, mode='constant', constant_values=0)
 
             # Helmet masks
             helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
@@ -223,7 +222,7 @@ class ContactDataset:
             helmet_masks_player_1 = np.stack([helmet_mask_player_1_dict[frame_id] for frame_id in frame_ids])
             helmet_masks_player_2 = np.stack([helmet_mask_player_2_dict[frame_id] for frame_id in frame_ids])  
             helmet_mask_frames = helmet_masks_player_1 + helmet_masks_player_2
-            helmet_mask_frames = np.pad(helmet_mask_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+            helmet_mask_frames = np.pad(helmet_mask_frames, pad_width=[(0, 0)] + [(self.half_feature_size, self.half_feature_size)] * 2, mode='constant', constant_values=0)
             
             # Centerpoints & Zoom
             helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & frame==@frame_id")
@@ -241,9 +240,9 @@ class ContactDataset:
                     y = 0
                 elif y > raw_frames.shape[1]:
                     y = raw_frames.shape[1]
-                centerpoint = (int(x) + half_feature_size, int(y) + half_feature_size)
-            mask_arrays.append(helmet_mask_frames[:, (centerpoint[1]-half_feature_size):(centerpoint[1]+half_feature_size), (centerpoint[0]-half_feature_size):(centerpoint[0]+half_feature_size)])
-            video_arrays.append(raw_frames[:, (centerpoint[1]-half_feature_size):(centerpoint[1]+half_feature_size), (centerpoint[0]-half_feature_size):(centerpoint[0]+half_feature_size)])
+                centerpoint = (int(x) + self.half_feature_size, int(y) + self.half_feature_size)
+            mask_arrays.append(helmet_mask_frames[:, (centerpoint[1]-self.half_feature_size):(centerpoint[1]+self.half_feature_size), (centerpoint[0]-self.half_feature_size):(centerpoint[0]+self.half_feature_size)])
+            video_arrays.append(raw_frames[:, (centerpoint[1]-self.half_feature_size):(centerpoint[1]+self.half_feature_size), (centerpoint[0]-self.half_feature_size):(centerpoint[0]+self.half_feature_size)])
             i+=1
         video_arrays = np.stack(video_arrays, axis = 0) # 2 (Views), num_frames, feature_size, fs
         mask_arrays = np.stack(mask_arrays, axis = 0)  # 2 (Views), num_frames, feature_size, fs
