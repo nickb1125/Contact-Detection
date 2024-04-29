@@ -171,6 +171,7 @@ class ContactDataset:
             
     def get_features(self, contact_info_df, box_cache=None):
         """Gets features from single row of records df."""
+        print(contact_info_df.contact_id)
         label = int(contact_info_df['contact'])
         game_play = contact_info_df['game_play']
         player_1_id = int(contact_info_df['nfl_player_id_1'])
@@ -273,3 +274,6 @@ tfms = transforms.Compose([
             transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),  # Randomly adjust brightness, contrast, saturation, and hue
             transforms.RandomRotation(degrees=30)
 ])
+
+
+
