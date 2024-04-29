@@ -27,7 +27,7 @@ from torchvision.transforms.functional import normalize
 
 feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
-skips = 1 # How many steps between time steps
+skips = 1 # How many steps between time steps 
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
 N = 1000 # Number per contact label for balanced training sample
 positive_allocation_rate = 0.3
@@ -47,7 +47,6 @@ val_size=0.2
 #### Train test splits #####
 
 print("----Initiating Train/Validation Splits------")
-
 
 # Manufacture and split train labels from val labels
 
@@ -79,7 +78,6 @@ dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_only
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
 print(f"-----Caching train features and labels-----")
-dataset._cache_all_features
 dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 
@@ -88,7 +86,6 @@ val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_
                       ground=False, feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=N*val_size, pos_balance=positive_allocation_rate)
 print(f"-----Caching test features and labels-----")
-val_dataset._cache_all_features
 val_dataloader = DataLoader(val_dataset, batch_size=256, shuffle=True)
 
 
@@ -109,6 +106,7 @@ for epoch in range(num_epochs):
         outputs = combined_model(x1, x2, x3)
 
         loss = criterion(outputs.squeeze(), labels.squeeze().float())  # Compute loss
+        print(loss)
         
         # Backward pass and optimization
         optimizer.zero_grad()

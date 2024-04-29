@@ -41,7 +41,7 @@ def postprocess_image(result: torch.Tensor, im_size: list)-> np.ndarray:
 def step_to_frame(step):
     return int(int(step)/10*59.95+5*59.95)
     
-def read_video(id, view, type, backround_removal=False):
+def read_video(id, view, type, needed_frames, backround_removal=False):
     """Reads video to numpy array using Open-CV"""
     if backround_removal:
         filepath = f"nfl-player-contact-detection/{type}/backround_removal/{id}_{view}.mp4"
@@ -51,20 +51,27 @@ def read_video(id, view, type, backround_removal=False):
     cap = cv2.VideoCapture(filepath)
     
     # Get video properties
-    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     # Initialize an empty numpy array to store the frames
-    video_array = np.empty((num_frames, height, width), dtype=np.uint8)
+    video_array = np.empty((len(needed_frames), height, width), dtype=np.uint8)
     
     # Loop through each frame and store it in the numpy array
-    for i in range(num_frames):
+    i=0
+    for request_frame in needed_frames:
+        if (request_frame >= num_frames) or (request_frame < 0):
+            video_array[i]=np.zeros((height, width))
+            continue
+        cap.set(cv2.CAP_PROP_POS_FRAMES, request_frame)
         ret, frame = cap.read()
         if not ret:
-            break
-        video_array[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
-        
+            raise ValueError(f"Frame not returned for play {id} frame {request_frame}. There are {num_frames} frames.")
+        if frame.shape[0]>1:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        video_array[i]=frame
+        i+=1
     # Release the video object
     cap.release()
     return video_array
@@ -161,42 +168,8 @@ class ContactDataset:
             self.neg_class = self.record_df.query("contact == 0").sample(n=int(N*(1-pos_balance)), replace=False, random_state=1).reset_index(drop=1)
             self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
-
-    @property
-    def _cache_all_features(self):
-        """Caches all observation features using in order of play groups for memory & speed productive load."""
-        unique_plays=self.record_df.game_play.unique()
-        unique_observations=self.record_df.contact_id.unique()
-        print(f"----Features being extracted for {len(unique_plays)} plays and {len(unique_observations)} potential contacts-----")
-        i=0
-        num_done=0
-        for play_id in self.record_df.game_play.unique():
-            i+=1
-            print(f"Play {i}/{len(unique_plays)}. ({num_done} potential contact complete.)")
-            helmet_df_subset = self.helmets_df.loc[self.helmets_df.game_play==play_id]
-            record_df_subset = self.record_df.loc[self.record_df.game_play==play_id]
-            # Cache Videos
-            video_cache = {x : read_video(id=play_id, view=x, type=self.type, backround_removal=self.backround_removal) for x in ["Sideline", 'Endzone']}
-            # Cache Player Boxes By Frame (index by view, player, frame)
-            box_cache = dict({view : {} for view in ["Sideline", "Endzone"]})
-            for player_id in set(record_df_subset.nfl_player_id_1).union(set(record_df_subset.nfl_player_id_2)):
-                player_relevant_steps_base = set(record_df_subset.loc[(player_id == record_df_subset.nfl_player_id_1) | 
-                                                                      (player_id == record_df_subset.nfl_player_id_2), 'step'])
-                relevant_steps = np.concatenate([np.arange(x-self.num_back_forward_steps*self.skips, 
-                                                        x+self.num_back_forward_steps*self.skips+1, 
-                                                        self.skips) for x in player_relevant_steps_base])
-                player_relevant_steps= player_relevant_steps_base.union(relevant_steps)
-                player_relevant_frames=np.sort([step_to_frame(x) for x in player_relevant_steps])
-                for view in ["Sideline", "Endzone"]:
-                    box_cache[view].update({int(player_id) : create_boxes_dict(id=play_id, view=view, 
-                                                             array_size=(video_cache[view].shape[1], video_cache[view].shape[2]), 
-                                                             helmet_df=helmet_df_subset, player_id=player_id, 
-                                                             frames=player_relevant_frames)})
-            for index, contact_info_df in tqdm(record_df_subset.iterrows(), total=record_df_subset.shape[0]):
-                num_done+=1
-                self.cache.update({index : self.get_features(contact_info_df, video_cache=video_cache, box_cache=box_cache)})   
             
-    def get_features(self, contact_info_df, video_cache=None, box_cache=None):
+    def get_features(self, contact_info_df, box_cache=None):
         """Gets features from single row of records df."""
         label = int(contact_info_df['contact'])
         game_play = contact_info_df['game_play']
@@ -234,29 +207,18 @@ class ContactDataset:
         i=0
         for view in ["Sideline", "Endzone"]:
             # Video array
-            if video_cache is not None:
-                returned_array = video_cache[view]
-            else:
-                returned_array = read_video(id=game_play, view=view, type=self.type, backround_removal=self.backround_removal)
-            
-            # If requested frames out of range return empty
-            valid_frame_index = np.where(np.logical_and(frame_ids >= 0, frame_ids < returned_array.shape[0]))
-            raw_frames = np.zeros((len(frame_ids),) + returned_array.shape[1:], dtype=returned_array.dtype)
-            raw_frames[valid_frame_index] = returned_array[frame_ids[valid_frame_index]]
+            raw_frames = read_video(id=game_play, view=view, type=self.type, 
+                                        needed_frames=frame_ids, backround_removal=self.backround_removal)
 
             # Pad
             dim_1, dim_2=raw_frames.shape[1], raw_frames.shape[2]
             raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
-            
+
             # Helmet masks
-            if box_cache is not None:
-                helmet_mask_player_1_dict = box_cache[view][player_1_id]
-                helmet_mask_player_2_dict = box_cache[view][player_2_id]
-            else:
-                helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                            helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids)
-                helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                            helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids)
+            helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                        helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids)
+            helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                        helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids)
             helmet_masks_player_1 = np.stack([helmet_mask_player_1_dict[frame_id] for frame_id in frame_ids])
             helmet_masks_player_2 = np.stack([helmet_mask_player_2_dict[frame_id] for frame_id in frame_ids])  
             helmet_mask_frames = helmet_masks_player_1 + helmet_masks_player_2
