@@ -132,8 +132,6 @@ class ContactDataset:
         self.distance_cutoff = distance_cutoff
         self.cache=dict()
         self.backround_removal=backround_removal
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
 
         if not self.ground:
             # Filter to only plays with cutoff distance (others will be assigned 0 contact prob)
@@ -172,92 +170,89 @@ class ContactDataset:
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
             
     def get_features(self, contact_info_df, box_cache=None):
-        """Gets features from a single row of records df."""
-
-        label = torch.tensor(int(contact_info_df['contact'])).to(self.device)
+        """Gets features from single row of records df."""
+        label = int(contact_info_df['contact'])
         game_play = contact_info_df['game_play']
-        player_1_id = torch.tensor(int(contact_info_df['nfl_player_id_1'])).to(self.device)
-        player_2_id = "G" if self.ground else torch.tensor(int(contact_info_df['nfl_player_id_2'])).to(self.device)
+        player_1_id = int(contact_info_df['nfl_player_id_1'])
+        player_2_id = "G" if self.ground else int(contact_info_df['nfl_player_id_2'])
         step = contact_info_df['step']
         frame_id = step_to_frame(step)
-        steps = np.arange(step - self.num_back_forward_steps * self.skips,
-                        step + self.num_back_forward_steps * self.skips + 1, self.skips)
+        steps = np.arange(step-self.num_back_forward_steps*self.skips, 
+                        step+self.num_back_forward_steps*self.skips+1, self.skips)
         frame_ids = np.sort([step_to_frame(x) for x in steps])
 
         half_feature_size = self.feature_size // 2
 
         # Get distance info (if not ground play)
         if not self.ground:
-            p1_row_track = self.tracking_df.loc[(self.tracking_df.game_play == game_play) &
-                                                (self.tracking_df.step.isin(steps)) &
-                                                (self.tracking_df.nfl_player_id == player_1_id)]
-            p2_row_track = self.tracking_df.loc[(self.tracking_df.game_play == game_play) &
-                                                (self.tracking_df.step.isin(steps)) &
-                                                (self.tracking_df.nfl_player_id == player_2_id)]
-            distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values) ** 2 +
-                            (p1_row_track['y_position'].values - p2_row_track['y_position'].values) ** 2)
+            p1_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
+                                                (self.tracking_df.step.isin(steps)) & 
+                                                (self.tracking_df.nfl_player_id==player_1_id)]
+            p2_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
+                                                (self.tracking_df.step.isin(steps)) & 
+                                                (self.tracking_df.nfl_player_id==player_2_id)]
+            distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
+                            (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
             if len(distance) != len(steps):
-                found_index = p1_row_track.step.values - min(steps)
+                found_index=p1_row_track.step.values-min(steps)
                 fixed = np.zeros(len(steps))
                 fixed[found_index] = distance
-                distance = fixed.copy()
-            distance_as_mat = torch.full((1, len(distance), self.feature_size, self.feature_size),
-                                        torch.tensor(distance, dtype=torch.float32, device=self.device))
+                distance=fixed.copy()
+            distance_as_mat = np.full((1, len(distance), self.feature_size, self.feature_size), distance[:, None, None])
 
         # Get video arrays and helmet masks
         video_arrays = []
         mask_arrays = []
+        centerpoints = {}
+        i=0
         for view in ["Sideline", "Endzone"]:
             # Video array
-            raw_frames = read_video(id=game_play, view=view, type=self.type,
-                                    needed_frames=frame_ids, background_removal=self.background_removal)
-            raw_frames = torch.tensor(raw_frames, dtype=torch.float32, device=self.device)
+            raw_frames = read_video(id=game_play, view=view, type=self.type, 
+                                        needed_frames=frame_ids, backround_removal=self.backround_removal)
 
             # Pad
-            raw_frames = torch.nn.functional.pad(raw_frames, (half_feature_size, half_feature_size,
-                                                            half_feature_size, half_feature_size, 0, 0))
+            dim_1, dim_2=raw_frames.shape[1], raw_frames.shape[2]
+            raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
 
             # Helmet masks
-            helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size=(raw_frames.shape[1:]),
-                                                        helmet_df=self.helmets_df, player_id=player_1_id, frames=frame_ids)
-            helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size=(raw_frames.shape[1:]),
-                                                        helmet_df=self.helmets_df, player_id=player_2_id, frames=frame_ids)
-            helmet_masks_player_1 = torch.stack([torch.tensor(helmet_mask_player_1_dict[frame_id], dtype=torch.float32,
-                                                            device=self.device) for frame_id in frame_ids])
-            helmet_masks_player_2 = torch.stack([torch.tensor(helmet_mask_player_2_dict[frame_id], dtype=torch.float32,
-                                                            device=self.device) for frame_id in frame_ids])
+            helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                        helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids)
+            helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
+                                                        helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids)
+            helmet_masks_player_1 = np.stack([helmet_mask_player_1_dict[frame_id] for frame_id in frame_ids])
+            helmet_masks_player_2 = np.stack([helmet_mask_player_2_dict[frame_id] for frame_id in frame_ids])  
             helmet_mask_frames = helmet_masks_player_1 + helmet_masks_player_2
-            helmet_mask_frames = torch.nn.functional.pad(helmet_mask_frames, (half_feature_size, half_feature_size,
-                                                                            half_feature_size, half_feature_size, 0, 0))
-
+            helmet_mask_frames = np.pad(helmet_mask_frames, pad_width=[(0, 0)] + [(half_feature_size, half_feature_size)] * 2, mode='constant', constant_values=0)
+            
             # Centerpoints & Zoom
             helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & frame==@frame_id")
             df_this_frame = helmet_mask_df.loc[helmet_mask_df['nfl_player_id'].isin([player_1_id, player_2_id])]
             if df_this_frame.empty:
-                centerpoint = (raw_frames.shape[2] // 2, raw_frames.shape[3] // 2)
+                centerpoint = (raw_frames.shape[1] // 2, raw_frames.shape[2] // 2)
             else:
                 x = np.mean(df_this_frame['left'].values + (df_this_frame['width'].values / 2))
                 y = np.mean(df_this_frame['top'].values - (df_this_frame['height'].values / 2))
-                x = np.clip(x, 0, raw_frames.shape[3])
-                y = np.clip(y, 0, raw_frames.shape[2])
+                if x < 0:
+                    x = 0
+                elif x > raw_frames.shape[2]:
+                    x = raw_frames.shape[2]
+                if y < 0:
+                    y = 0
+                elif y > raw_frames.shape[1]:
+                    y = raw_frames.shape[1]
                 centerpoint = (int(x) + half_feature_size, int(y) + half_feature_size)
-
-            mask_arrays.append(helmet_mask_frames[:, :,
-                            (centerpoint[1] - half_feature_size):(centerpoint[1] + half_feature_size),
-                            (centerpoint[0] - half_feature_size):(centerpoint[0] + half_feature_size)])
-            video_arrays.append(raw_frames[:, :,
-                            (centerpoint[1] - half_feature_size):(centerpoint[1] + half_feature_size),
-                            (centerpoint[0] - half_feature_size):(centerpoint[0] + half_feature_size)])
-
-        video_arrays = torch.stack(video_arrays, dim=0)  # 2 (Views), num_frames, feature_size, fs
-        mask_arrays = torch.stack(mask_arrays, dim=0)  # 2 (Views), num_frames, feature_size, fs
+            mask_arrays.append(helmet_mask_frames[:, (centerpoint[1]-half_feature_size):(centerpoint[1]+half_feature_size), (centerpoint[0]-half_feature_size):(centerpoint[0]+half_feature_size)])
+            video_arrays.append(raw_frames[:, (centerpoint[1]-half_feature_size):(centerpoint[1]+half_feature_size), (centerpoint[0]-half_feature_size):(centerpoint[0]+half_feature_size)])
+            i+=1
+        video_arrays = np.stack(video_arrays, axis = 0) # 2 (Views), num_frames, feature_size, fs
+        mask_arrays = np.stack(mask_arrays, axis = 0)  # 2 (Views), num_frames, feature_size, fs
 
         # Organize
         feature = [video_arrays, mask_arrays]
         if not self.ground:
             feature.append(distance_as_mat)
-        feature_array = torch.cat(feature, dim=0)  # Channel, Time, H, W
-        ret = (tuple(feature_array[:, timestep, :, :] for timestep in range(feature_array.shape[1])), torch.tensor([label]))
+        feature_array = np.concatenate(feature, axis = 0) # Channel, Time, H, W
+        ret = (tuple(torch.Tensor(feature_array[:, timestep, :, :]) for timestep in range(feature_array.shape[1])), torch.Tensor([label]))
         return ret
 
     def __getitem__(self, idx):
