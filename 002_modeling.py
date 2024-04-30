@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import torch.optim as optim
 from tqdm import tqdm
-from objects import step_to_frame, create_boxes_dict, ContactDataset
+from objects import step_to_frame, create_boxes_dict, ContactDataset, seed_everything
 from models import Encoder, ContactNet
 import torch
 import torch.nn as nn
@@ -20,8 +20,9 @@ from sklearn.model_selection import train_test_split
 from transformers import AutoModelForImageSegmentation
 from torchvision.transforms.functional import normalize
 
-# srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
+seed_everything(2)# Seed everything
 
+# srun -p gpu-common  --gres=gpu --mem=4G --pty bash -i
 
 ############ SETTINGS #################
 
