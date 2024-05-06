@@ -8,6 +8,11 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
         self.conv1 = nn.Conv2d(5, 3, kernel_size=3, stride=1, padding=1)
         self.resnet= models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+        # Freeze all layers except the last fc layer
+        for param in self.resnet.parameters():
+            param.requires_grad = False
+        for param in self.resnet.fc.parameters():
+            param.requires_grad = True
         self.fc = nn.Linear(1000, 100)
 
     def forward(self, x):

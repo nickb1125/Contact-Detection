@@ -162,24 +162,32 @@ class ContactDataset:
         self.record_df['nfl_player_id_1'] = self.record_df['nfl_player_id_1'].astype(int)
         self.record_df['nfl_player_id_2'] = self.record_df['nfl_player_id_2'].astype(int)
         
-         # Filter to balanced sample
+         # Filter to balanced sample with proper play number
         if not self.type == "test":
-            self.pos_class = self.record_df.query("contact == 1").sample(n=int(N*pos_balance), replace=False, random_state=1).reset_index(drop=1)
-            self.neg_class = self.record_df.query("contact == 0").sample(n=int(N*(1-pos_balance)), replace=False, random_state=1).reset_index(drop=1)
+            # Randomly select N unique plays
+            unique_groups =  self.record_df['game_play'].unique()
+            if N > len(unique_groups):
+                print("N plays is greater than number of plays in data, using entire set....")
+                N = len(unique_groups)
+            selected_groups = np.random.choice(unique_groups, size=N, replace=False)
+            self.record_df = self.record_df.loc[self.record_df.game_play.isin(selected_groups)]
+            
+            # Balance positive and negative samples
+            num_pos = sum(self.record_df.contact.values)
+            num_neg = len(self.record_df) - num_pos
+            if num_pos>num_neg:
+                self.pos_class = self.record_df.query("contact == 1").sample(n=num_neg, replace=False, random_state=1).reset_index(drop=1)
+                self.neg_class = self.record_df.query("contact == 0").reset_index(drop=1)
+            else:
+                self.pos_class = self.record_df.query("contact == 1").reset_index(drop=1)
+                self.neg_class = self.record_df.query("contact == 0").sample(n=num_pos, replace=False, random_state=1).reset_index(drop=1)
+
+            # Achieve proper balance
+            self.pos_class = self.pos_class.sample(frac=pos_balance, replace=False, random_state=1).reset_index(drop=1)
+
+            # Combine
             self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
-        
-        # Cache distances
-        print("-----Caching distances for efficient loading....------")
-        valid_interactions = self.record_df[(self.record_df['nfl_player_id_1'] != 'G') & (self.record_df['nfl_player_id_2'] != 'G')]
-        self.distance_cache = {game_play: dict() for game_play in valid_interactions['game_play'].unique()}
-        for contact_id, game_play, player_id_1, player_id_2 in tqdm(valid_interactions[['contact_id', 'game_play', 'nfl_player_id_1', 'nfl_player_id_2']].itertuples(index=False), total=len(valid_interactions)):
-            track_df = self.tracking_df[self.tracking_df['game_play'] == game_play].sort_values(by="step")
-            df_1 = track_df[track_df['nfl_player_id'] == player_id_1]
-            df_2 = track_df[track_df['nfl_player_id'] == player_id_2]
-            distance = np.square(df_1['x_position'].astype(float).values - df_2['x_position'].astype(float).values) + \
-                        np.square(df_1['y_position'].astype(float).values - df_2['y_position'].astype(float).values)
-            self.distance_cache[contact_id] = dict({step : dist for step, dist in zip(df_1.step.values, distance)})
         
     def _cache_all_features(self):
         """Caches all observation features using in order of play groups for memory & speed productive load."""
@@ -211,7 +219,9 @@ class ContactDataset:
             
     def get_features(self, contact_info_df, video_cache=None, box_cache=None):
         """Gets features from single row of records df."""
-        label = int(contact_info_df['contact'])
+        label = contact_info_df['contact']
+        if not np.isnan(label):
+            label = int(label)
         game_play = contact_info_df['game_play']
         contact_id =  contact_info_df['contact_id']
         player_1_id = int(contact_info_df['nfl_player_id_1'])
@@ -225,8 +235,17 @@ class ContactDataset:
 
         # Get distance info 
         if player_2_id!="G":
-            distance = self.distance_cache[contact_id]
-            distance = np.array([distance[step] if step in distance.keys() else 0 for step in steps])
+            p1_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
+                                                (self.tracking_df.step.isin(steps)) & 
+                                                (self.tracking_df.nfl_player_id==player_1_id)]
+            p2_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
+                                                (self.tracking_df.step.isin(steps)) & 
+                                                (self.tracking_df.nfl_player_id==player_2_id)]
+            missing_steps = list(set(steps) - set(p1_row_track.step))
+            distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
+                            (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
+            if missing_steps:
+                distance = np.array([0 if step in missing_steps else distance[steps.index(step)] for step in steps])
             distance_as_mat = np.full((1, len(distance), self.feature_size, self.feature_size), distance[:, None, None])
         else:
             distance_as_mat = np.zeros((1, len(distance), self.feature_size, self.feature_size))
