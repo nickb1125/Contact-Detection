@@ -30,7 +30,7 @@ feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
 skips = 1 # How many steps between time steps 
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
-N = 10 # Number of plays
+N = 5 # Number of plays
 positive_allocation_rate = 0.3
 
 
@@ -70,19 +70,11 @@ print("---Loading Train Dataloader----")
 dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv",
                       feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
-print(f"-----Caching train features and labels-----")
-dataset._cache_all_features()
-dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 print("---Loading Val Dataloader----")
 val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv",
                       feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=int(N*val_size), pos_balance=positive_allocation_rate)
-print(f"-----Caching val features and labels-----")
-val_dataset._cache_all_features()
-val_dataloader = DataLoader(val_dataset, batch_size=256, shuffle=True)
-
-
 
 print("---Initializing Model----")
 combined_model = ContactNet(image_size, input_size, hidden_size, num_layers, dropout)
@@ -96,8 +88,8 @@ for epoch in range(num_epochs):
     # Training loop
     combined_model.train()
     total_loss = 0
-    total_samples = len(dataset)
-    for batch_idx, (features, labels) in enumerate(dataloader):
+    total_play_batches = len(dataset)
+    for batch_idx, (features, labels) in enumerate(dataset):
         x1, x2, x3 = features
         x1, x2, x3 = x1.to(device), x2.to(device), x3.to(device)
 

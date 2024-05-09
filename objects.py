@@ -11,6 +11,7 @@ from transformers import AutoModelForImageSegmentation
 from torchvision.transforms.functional import normalize
 import torch.nn.functional as F
 import random
+import polars as pl
 
 
 #### For backround removal (from hugging face) #####
@@ -42,45 +43,16 @@ def postprocess_image(result: torch.Tensor, im_size: list)-> np.ndarray:
 def step_to_frame(step):
     return int(int(step)/10*59.95+5*59.95)
     
-def read_video(id, view, type, needed_frames, backround_removal=False):
+def read_video(id, view, type, needed_frames):
     """Reads video to numpy array using Open-CV"""
-    if backround_removal:
-        filepath = f"nfl-player-contact-detection/{type}/backround_removal/{id}_{view}.mp4"
-    else:
-        filepath = f"nfl-player-contact-detection/{type}/{id}_{view}.mp4"
-    # Open the video file
-    cap = cv2.VideoCapture(filepath)
-    
-    # Get video properties
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-    if needed_frames=="all":
-        video_array = np.empty((num_frames, height, width), dtype=np.uint8)
-        for i in range(num_frames):
-            ret, frame = cap.read()
-            if not ret:
-                break
-            video_array[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
-    else:
-        i=0
-        video_array = np.empty((len(needed_frames), height, width), dtype=np.uint8)
-        for request_frame in needed_frames:
-            if (request_frame >= num_frames) or (request_frame < 0):
-                video_array[i]=np.zeros((height, width))
-                continue
-            cap.set(cv2.CAP_PROP_POS_FRAMES, request_frame)
-            ret, frame = cap.read()
-            if not ret:
-                raise ValueError(f"Frame not returned for play {id} frame {request_frame}. There are {num_frames} frames.")
-            if frame.shape[0]>1:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            video_array[i]=frame
-            i+=1
-    # Release the video object
-    cap.release()
-    return video_array
+    filepath_bases = [f"nfl-player-contact-detection/{type}/frames/{id}_{view}_{frame}.jpg" for frame in needed_frames]
+    frames = []
+    for path in filepath_bases:
+        image = cv2.imread(path)  # Read image in BGR format
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        frames.append(image)
+    frames_tensor = np.stack(frames, axis=0)
+    return frames_tensor
 
 def view_contact(video_array, helmet_mask):
     """Plots contact with helmet mask."""
@@ -91,220 +63,240 @@ def view_contact(video_array, helmet_mask):
 
 def create_boxes_dict(id, view, array_size, helmet_df, player_id, frames):
     """Creates array of helmet mask boxes from helmet tracking data."""
+    
     # Query the DataFrame once for all frames
-    player_id=int(player_id)
-    frame_data = helmet_df.query("view==@view & game_play==@id & nfl_player_id==@player_id")
-    frames_dict = dict()
+    player_id = str(player_id)
+    frame_data = helmet_df.filter(
+        (pl.col("view") == view)
+        & (pl.col("game_play") == id)
+        & (pl.col("nfl_player_id") == player_id)
+    )
+    frames_dict = {}
     for frame_idx in frames:
-        if frame_idx in frame_data.frame.values:
-            left, top, width, height = frame_data.loc[frame_data.frame==frame_idx, ['left', 'top', 'width', 'height']].reset_index(drop=1).iloc[0,]
+        frame_idx = int(frame_idx)
+        if frame_idx in frame_data["frame"].to_numpy():
+            # Get box coordinates for the current frame
+            frame_row = frame_data.filter(pl.col("frame") == frame_idx)
+            left = frame_row["left"][0]
+            top = frame_row["top"][0]
+            width = frame_row["width"][0]
+            height = frame_row["height"][0]
+
             # Ensure box coordinates are within the array bounds
             left = max(0, left)
             top = max(0, top)
             right = min(array_size[1], left + width)
             bottom = min(array_size[0], top + height)
 
-            # Mark the region of the box in the numpy array
+            # Create a new numpy array for the boxes
             boxes_array = np.zeros(array_size, dtype=np.uint8)
             boxes_array[top:bottom, left:right] = 255
         else:
+            # No box for this frame, create an empty array
             boxes_array = np.zeros(array_size, dtype=np.uint8)
-        frames_dict.update({frame_idx : boxes_array})
+
+        frames_dict[frame_idx] = boxes_array
+
     return frames_dict
 
 class ContactDataset:
     """Dataset for training and testing zoomed contact examples."""
 
-    # TO DO: Cross validate image size, add multiple frames per play, cross validate how many plays back forward, cross val skips
-
     def __init__(self, record_df_path, feature_size=256, num_back_forward_steps=2, skips=1, distance_cutoff=5,
-                N=10000, pos_balance = 0.5, backround_removal=False):
-            
-        self.record_df = pd.read_csv(record_df_path).query("nfl_player_id_2 != 'G'")
+                 N=10000, pos_balance=0.5, background_removal=False):
+
+        self.record_df = pl.read_csv(record_df_path, dtypes={"nfl_player_id_1" : str, "nfl_player_id_2" : str}).\
+            filter(pl.col("nfl_player_id_2") != "G")
         if "train" in record_df_path:
             self.type = "train"
         else:
             self.type = "test"
-        self.tracking_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_player_tracking.csv")
-        self.helmets_df = pd.read_csv(os.getcwd() + f"/nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
+        
+        tracking_df_path = os.path.join(os.getcwd(), f"nfl-player-contact-detection/{self.type}_player_tracking.csv")
+        helmets_df_path = os.path.join(os.getcwd(), f"nfl-player-contact-detection/{self.type}_baseline_helmets.csv")
+        
+        self.tracking_df = pl.read_csv(tracking_df_path, dtypes={"nfl_player_id" : str})
+        self.helmets_df = pl.read_csv(helmets_df_path, dtypes={"nfl_player_id" : str})
+        
         self.feature_size = feature_size
-        self.skips=skips
-        self.num_back_forward_steps=num_back_forward_steps
+        self.skips = skips
+        self.num_back_forward_steps = num_back_forward_steps
         self.distance_cutoff = distance_cutoff
-        self.cache=dict()
-        self.backround_removal=backround_removal
+        self.background_removal = background_removal
         self.half_feature_size = self.feature_size // 2
         
-        # Filter to only plays with cutoff distance (others will be assigned 0 contact prob) 
-        loc_df = self.tracking_df[["game_play", "nfl_player_id", "step", "x_position", "y_position"]]
+        # Filter to only plays with cutoff distance (others will be assigned 0 contact prob)
+        loc_df = self.tracking_df.select([
+            "game_play", "nfl_player_id", "step", "x_position", "y_position"
+        ])
+        
         merge_p1 = (
-            self.record_df.astype(str).merge(
-                loc_df.rename(
-                    {"nfl_player_id": "nfl_player_id_1", "x_position": "x_position_1", "y_position": "y_position_1"},
-                    axis=1,
-                ).astype(str),
+            self.record_df.join(
+                loc_df.select(
+                    pl.col("game_play"),
+                    pl.col("step"),
+                    pl.col("nfl_player_id").alias("nfl_player_id_1"),
+                    pl.col("x_position").alias("x_position_1"),
+                    pl.col("y_position").alias("y_position_1")
+                ),
                 on=["game_play", "nfl_player_id_1", "step"],
-                how="left",
+                how="left"
             )
-            .merge(
-                loc_df.rename(
-                    {"nfl_player_id": "nfl_player_id_2", "x_position": "x_position_2", "y_position": "y_position_2"},
-                    axis=1,
-                ).astype(str),
+            .join(
+                loc_df.select(
+                    pl.col("game_play"),
+                    pl.col("step"),
+                    pl.col("nfl_player_id").alias("nfl_player_id_2"),
+                    pl.col("x_position").alias("x_position_2"),
+                    pl.col("y_position").alias("y_position_2")
+                ),
                 on=["game_play", "nfl_player_id_2", "step"],
-                how="left",
+                how="left"
             )
         )
-        merge_p1['distance']=(merge_p1.x_position_1.astype(float)-merge_p1.x_position_2.astype(float))**2+(merge_p1.y_position_1.astype(float)-merge_p1.y_position_2.astype(float))**2
-        merge_p1 = merge_p1.loc[(merge_p1.distance < self.distance_cutoff) | (merge_p1.distance.isna()) ]
-        self.record_df = self.record_df.loc[self.record_df.contact_id.isin(merge_p1.contact_id)].reset_index(drop=1)
-        self.record_df['frame'] = list(map(step_to_frame, self.record_df.step))
-        self.record_df['nfl_player_id_1'] = self.record_df['nfl_player_id_1'].astype(int)
-        self.record_df['nfl_player_id_2'] = self.record_df['nfl_player_id_2'].astype(int)
         
-         # Filter to balanced sample with proper play number
-        if not self.type == "test":
+        merge_p1 = merge_p1.with_columns(
+            ((pl.col("x_position_1").cast(float) - pl.col("x_position_2").cast(float))**2 +
+            (pl.col("y_position_1").cast(float) - pl.col("y_position_2").cast(float))**2).alias("distance")
+        )
+        
+        merge_p1 = merge_p1.filter(
+            (pl.col("distance") < self.distance_cutoff) | pl.col("distance").is_null()
+        )
+        
+        self.record_df = self.record_df.filter(
+            pl.col("contact_id").is_in(merge_p1['contact_id'].to_numpy()))
+        
+        self.record_df = self.record_df.with_columns(
+            pl.col("step").apply(step_to_frame).cast(int).alias('frame'),
+        )
+        
+        # Filter to balanced sample with proper play number
+        if self.type != "test":
             # Randomly select N unique plays
-            unique_groups =  self.record_df['game_play'].unique()
+            unique_groups = self.record_df["game_play"].unique().to_numpy()
             if N > len(unique_groups):
                 print("N plays is greater than number of plays in data, using entire set....")
                 N = len(unique_groups)
             selected_groups = np.random.choice(unique_groups, size=N, replace=False)
-            self.record_df = self.record_df.loc[self.record_df.game_play.isin(selected_groups)]
+            self.record_df = self.record_df.filter(pl.col("game_play").is_in(selected_groups))
             
             # Balance positive and negative samples
-            num_pos = sum(self.record_df.contact.values)
-            num_neg = len(self.record_df) - num_pos
-            if num_pos>num_neg:
-                self.pos_class = self.record_df.query("contact == 1").sample(n=num_neg, replace=False, random_state=1).reset_index(drop=1)
-                self.neg_class = self.record_df.query("contact == 0").reset_index(drop=1)
+            pos_df = self.record_df.filter(pl.col("contact") == 1)
+            neg_df = self.record_df.filter(pl.col("contact") == 0)
+            
+            num_pos = pos_df.shape[0]
+            num_neg = neg_df.shape[0]
+            
+            
+            if num_pos > num_neg:
+                self.pos_class = pos_df.sample(n=num_neg, with_replacement=False, seed=1)
+                self.neg_class = neg_df
             else:
-                self.pos_class = self.record_df.query("contact == 1").reset_index(drop=1)
-                self.neg_class = self.record_df.query("contact == 0").sample(n=num_pos, replace=False, random_state=1).reset_index(drop=1)
-
+                self.pos_class = pos_df
+                self.neg_class = neg_df.sample(n=num_pos, with_replacement=False, seed=1)
+            
             # Achieve proper balance
-            self.pos_class = self.pos_class.sample(frac=pos_balance, replace=False, random_state=1).reset_index(drop=1)
-
+            self.pos_class = self.pos_class.sample(fraction=pos_balance, with_replacement=False, seed=1)
+            
             # Combine
-            self.record_df  = pd.concat([self.pos_class, self.neg_class], axis = 0).reset_index(drop = 1)
+            self.record_df = pl.concat([self.pos_class, self.neg_class], how = "vertical")
+            self.game_plays = self.record_df["game_play"].unique().to_numpy()
             print(f"Data Sample Contains {self.record_df.shape[0]} observations.")
         
-    def _cache_all_features(self):
-        """Caches all observation features using in order of play groups for memory & speed productive load."""
-        unique_plays=self.record_df.game_play.unique()
-        unique_observations=self.record_df.contact_id.unique()
-        print(f"----Features being extracted for {len(unique_plays)} plays and {len(unique_observations)} potential contacts-----")
-        for play_id in tqdm(self.record_df.game_play.unique()):
-            helmet_df_subset = self.helmets_df.loc[self.helmets_df.game_play==play_id]
-            record_df_subset = self.record_df.loc[self.record_df.game_play==play_id]
-            # Cache Videos
-            video_cache = {x : read_video(id=play_id, view=x, type=self.type, needed_frames="all") for x in ["Sideline", 'Endzone']}
-            # Cache Player Boxes By Frame (index by view, player, frame)
-            box_cache = dict({view : {} for view in ["Sideline", "Endzone"]})
-            for player_id in set(record_df_subset.nfl_player_id_1).union(set(record_df_subset.nfl_player_id_2)):
-                player_relevant_steps_base = set(record_df_subset.loc[(player_id == record_df_subset.nfl_player_id_1) | 
-                                                                           (player_id == record_df_subset.nfl_player_id_2), 'step'])
-                relevant_steps = np.concatenate([np.arange(x-self.num_back_forward_steps*self.skips, 
-                                                        x+self.num_back_forward_steps*self.skips+1, 
-                                                        self.skips) for x in player_relevant_steps_base])
-                player_relevant_steps= player_relevant_steps_base.union(relevant_steps)
-                player_relevant_frames=np.sort([step_to_frame(x) for x in player_relevant_steps])
-                for view in ["Sideline", "Endzone"]:
-                    box_cache[view].update({int(player_id) : create_boxes_dict(id=play_id, view=view, 
-                                                             array_size=(video_cache[view].shape[1], video_cache[view].shape[2]), 
-                                                             helmet_df=helmet_df_subset, player_id=player_id, 
-                                                             frames=player_relevant_frames)})
-            for index, contact_info_df in record_df_subset.iterrows():
-                self.cache.update({index : self.get_features(contact_info_df, video_cache=video_cache, box_cache=box_cache)})
-            
     def get_features(self, contact_info_df, video_cache=None, box_cache=None):
         """Gets features from single row of records df."""
-        label = contact_info_df['contact']
+        label = contact_info_df['contact'][0]
         if not np.isnan(label):
             label = int(label)
-        game_play = contact_info_df['game_play']
-        contact_id =  contact_info_df['contact_id']
-        player_1_id = int(contact_info_df['nfl_player_id_1'])
-        player_2_id = contact_info_df['nfl_player_id_2']
-        player_2_id = "G" if player_2_id=="G" else int(contact_info_df['nfl_player_id_2'])
-        step = contact_info_df['step']
+        game_play = contact_info_df['game_play'][0]
+        contact_id = contact_info_df['contact_id'][0]
+        player_1_id = str(contact_info_df['nfl_player_id_1'][0])
+        player_2_id = contact_info_df['nfl_player_id_2'][0]
+        step = contact_info_df['step'][0]
         frame_id = step_to_frame(step)
-        steps = np.arange(step-self.num_back_forward_steps*self.skips, 
-                        step+self.num_back_forward_steps*self.skips+1, self.skips).tolist()
-        frame_ids = np.sort([step_to_frame(x) for x in steps]).tolist()
+        steps = list(range(step - self.num_back_forward_steps * self.skips,
+                           step + self.num_back_forward_steps * self.skips + 1, self.skips))
+        frame_ids = [step_to_frame(x) for x in steps]
 
         # Get distance info 
-        if player_2_id!="G":
-            p1_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
-                                                (self.tracking_df.step.isin(steps)) & 
-                                                (self.tracking_df.nfl_player_id==player_1_id)]
-            p2_row_track = self.tracking_df.loc[(self.tracking_df.game_play==game_play) & 
-                                                (self.tracking_df.step.isin(steps)) & 
-                                                (self.tracking_df.nfl_player_id==player_2_id)]
-            missing_steps = list(set(steps) - set(p1_row_track.step))
-            distance = np.sqrt((p1_row_track['x_position'].values - p2_row_track['x_position'].values)**2 + 
-                            (p1_row_track['y_position'].values - p2_row_track['y_position'].values)**2)
+        if player_2_id != "G":
+            p1_row_track = self.tracking_df.filter(
+                (pl.col("game_play") == game_play)
+                & (pl.col("step").is_in(steps))
+                & (pl.col("nfl_player_id") == player_1_id)
+            )
+            p2_row_track = self.tracking_df.filter(
+                (pl.col("game_play") == game_play)
+                & (pl.col("step").is_in(steps))
+                & (pl.col("nfl_player_id") == player_2_id)
+            )
+
+            missing_steps = set(steps) - set(p1_row_track.select("step").to_numpy().flatten())
+            distance = np.sqrt(
+                (p1_row_track.select("x_position").to_numpy().flatten() - p2_row_track.select("x_position").to_numpy().flatten()) ** 2 +
+                (p1_row_track.select("y_position").to_numpy().flatten() - p2_row_track.select("y_position").to_numpy().flatten()) ** 2
+            )
+
             if missing_steps:
                 distance = np.array([0 if step in missing_steps else distance[steps.index(step)] for step in steps])
+
             distance_as_mat = np.full((1, len(distance), self.feature_size, self.feature_size), distance[:, None, None])
         else:
-            distance_as_mat = np.zeros((1, len(distance), self.feature_size, self.feature_size))
+            distance_as_mat = np.zeros((1, len(steps), self.feature_size, self.feature_size))
 
         # Get video arrays and helmet masks
         video_arrays = []
         mask_arrays = []
-        centerpoints = {}
-        i=0
         for view in ["Sideline", "Endzone"]:
             # Video array
             if video_cache is not None:
                 cache_view = video_cache[view]
                 option_replace = np.zeros(cache_view[0].shape)
-                raw_frames = np.stack([cache_view[frame, :, :] if frame<cache_view.shape[0] else option_replace for frame in frame_ids], axis=0)
+                raw_frames = np.stack([cache_view[frame, :, :] if frame < cache_view.shape[0] else option_replace for frame in frame_ids], axis=0)
             else:
-                raw_frames = read_video(id=game_play, view=view, type=self.type, 
-                                            needed_frames=frame_ids, backround_removal=self.backround_removal)
-
+                raw_frames = read_video(id=game_play, view=view, type=self.type, needed_frames=frame_ids)
+                
             # Pad
-            dim_1, dim_2=raw_frames.shape[1], raw_frames.shape[2]
-            raw_frames=np.pad(raw_frames, pad_width=[(0, 0)] + [(self.half_feature_size, self.half_feature_size)] * 2, mode='constant', constant_values=0)
+            raw_frames = np.pad(raw_frames, pad_width= [(0, 0)] + [(self.half_feature_size, self.half_feature_size)] * 2, 
+                                mode='constant', constant_values=0)
 
             # Helmet masks
             if box_cache is not None:
                 helmet_mask_player_1_dict = box_cache[view][player_1_id]
                 helmet_mask_player_2_dict = box_cache[view][player_2_id]
             else:
-                helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                            helmet_df=self.helmets_df, player_id = player_1_id, frames = frame_ids)
-                helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size = (dim_1, dim_2),
-                                                            helmet_df=self.helmets_df, player_id = player_2_id, frames = frame_ids)
+                helmet_mask_player_1_dict = create_boxes_dict(id=game_play, view=view, array_size=(raw_frames.shape[1], raw_frames.shape[2]),
+                                                              helmet_df=self.helmets_df, player_id=player_1_id, frames=frame_ids)
+                helmet_mask_player_2_dict = create_boxes_dict(id=game_play, view=view, array_size=(raw_frames.shape[1], raw_frames.shape[2]),
+                                                              helmet_df=self.helmets_df, player_id=player_2_id, frames=frame_ids)
+
             helmet_masks_player_1 = np.stack([helmet_mask_player_1_dict[frame_id] for frame_id in frame_ids])
             helmet_masks_player_2 = np.stack([helmet_mask_player_2_dict[frame_id] for frame_id in frame_ids])  
             helmet_mask_frames = helmet_masks_player_1 + helmet_masks_player_2
             helmet_mask_frames = np.pad(helmet_mask_frames, pad_width=[(0, 0)] + [(self.half_feature_size, self.half_feature_size)] * 2, mode='constant', constant_values=0)
 
             # Centerpoints & Zoom
-            helmet_mask_df = self.helmets_df.query("view==@view & game_play==@game_play & frame==@frame_id")
-            df_this_frame = helmet_mask_df.loc[helmet_mask_df['nfl_player_id'].isin([player_1_id, player_2_id])]
-            if df_this_frame.empty:
+            helmet_mask_df = self.helmets_df.filter(
+                (pl.col("view") == view)
+                & (pl.col("game_play") == game_play)
+                & (pl.col("frame") == frame_id)
+            )
+            df_this_frame = helmet_mask_df.filter(pl.col("nfl_player_id").is_in([player_1_id, player_2_id]))
+            if df_this_frame.shape[0] == 0:
                 centerpoint = (raw_frames.shape[1] // 2, raw_frames.shape[2] // 2)
             else:
-                x = np.mean(df_this_frame['left'].values + (df_this_frame['width'].values / 2))
-                y = np.mean(df_this_frame['top'].values - (df_this_frame['height'].values / 2))
-                if x < 0:
-                    x = 0
-                elif x > raw_frames.shape[2]:
-                    x = raw_frames.shape[2]
-                if y < 0:
-                    y = 0
-                elif y > raw_frames.shape[1]:
-                    y = raw_frames.shape[1]
+                x = np.mean(df_this_frame.select("left").to_numpy().flatten() + (df_this_frame.select("width").to_numpy().flatten() / 2))
+                y = np.mean(df_this_frame.select("top").to_numpy().flatten() - (df_this_frame.select("height").to_numpy().flatten() / 2))
+                x = max(0, min(x, raw_frames.shape[2]))
+                y = max(0, min(y, raw_frames.shape[1]))
                 centerpoint = (int(x) + self.half_feature_size, int(y) + self.half_feature_size)
-            mask_arrays.append(helmet_mask_frames[:, (centerpoint[1]-self.half_feature_size):(centerpoint[1]+self.half_feature_size), (centerpoint[0]-self.half_feature_size):(centerpoint[0]+self.half_feature_size)])
-            video_arrays.append(raw_frames[:, (centerpoint[1]-self.half_feature_size):(centerpoint[1]+self.half_feature_size), (centerpoint[0]-self.half_feature_size):(centerpoint[0]+self.half_feature_size)])
-            i+=1
-        video_arrays = np.stack(video_arrays, axis = 0) # 2 (Views), num_frames, feature_size, fs
-        mask_arrays = np.stack(mask_arrays, axis = 0)  # 2 (Views), num_frames, feature_size, fs
+
+            mask_arrays.append(helmet_mask_frames[:, (centerpoint[1] - self.half_feature_size):(centerpoint[1] + self.half_feature_size), (centerpoint[0] - self.half_feature_size):(centerpoint[0] + self.half_feature_size)])
+            video_arrays.append(raw_frames[:, (centerpoint[1] - self.half_feature_size):(centerpoint[1] + self.half_feature_size), (centerpoint[0] - self.half_feature_size):(centerpoint[0] + self.half_feature_size)])
+
+        video_arrays = np.stack(video_arrays, axis=0)  # 2 (Views), num_frames, feature_size, fs
+        mask_arrays = np.stack(mask_arrays, axis=0)    # 2 (Views), num_frames, feature_size, fs
 
         # Organize
         feature = [video_arrays, mask_arrays, distance_as_mat]
@@ -314,11 +306,8 @@ class ContactDataset:
 
     def __getitem__(self, idx):
         # Organize record info
-        if idx in self.cache.keys():
-            return self.cache[idx]
-        contact_info_df = self.record_df.iloc[idx,:]
-        self.cache.update({idx : self.get_features(contact_info_df)}) 
-        return self.cache[idx]
+        contact_info_df = self.record_df[idx,:]
+        return self.get_features(contact_info_df)
 
     def __len__(self):
         return len(self.record_df)

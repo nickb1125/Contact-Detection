@@ -10,10 +10,11 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from itertools import chain
+import shutil
 
 ####### SETTING #######
 
-backround_remove=True
+backround_remove=False
 
 ####################
 
@@ -33,6 +34,10 @@ test_info.to_csv(os.getcwd() + "/nfl-player-contact-detection/test_labels.csv")
 needed_test_df = test_info[['game_play', 'step']].drop_duplicates().reset_index(drop=1)
 needed_test_df['frame'] = list(map(step_to_frame, needed_test_df.step))
 
+if os.path.exists(os.getcwd() + "/nfl-player-contact-detection/train/frames"):
+    shutil.rmtree(os.getcwd() + "/nfl-player-contact-detection/train/frames")
+if os.path.exists(os.getcwd() + "/nfl-player-contact-detection/test/frames"):
+    shutil.rmtree(os.getcwd() + "/nfl-player-contact-detection/test/frames")
 
 # Get train video filepaths
 train_file_paths = []
@@ -50,6 +55,9 @@ for root, dirs, files in os.walk(os.getcwd() + "/nfl-player-contact-detection/te
 
 train_file_paths.extend(test_file_paths)
 all_file_paths=train_file_paths.copy()
+all_file_paths = [item for item in all_file_paths if ('Sideline' in item) or ("Endzone" in item)] 
+
+print(f"----Saving frames from {len(needed_train_df.game_play.unique())} plays and {len(all_file_paths)} views.-----")
 
 if backround_remove:
     # Pull pretrained backround removal model from hugging face
@@ -66,8 +74,8 @@ if backround_remove:
 
 # Make save directories if needed
 
-os.makedirs(os.getcwd() + "/nfl-player-contact-detection/train/backround_removal", exist_ok=True)
-os.makedirs(os.getcwd() + "/nfl-player-contact-detection/test/backround_removal", exist_ok=True)
+os.makedirs(os.getcwd() + "/nfl-player-contact-detection/train/frames", exist_ok=True)
+os.makedirs(os.getcwd() + "/nfl-player-contact-detection/test/frames", exist_ok=True)
 
 # Get video save options
 
@@ -89,12 +97,16 @@ for filepath in tqdm(all_file_paths):
 
     # Get information for save
     base = filepath.split("/")[-1].split(".")[0]
-    game_play = base.split("_")[0]+ "_"+ base.split("_")[1]
+    try:
+        game_play = base.split("_")[0]+ "_"+ base.split("_")[1]
+    except:
+        print(base)
+        raise ValueError
     if "train" in filepath:
-        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/train/backround_removal/{base}"
+        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/train/frames/{base}"
         needed_frames = set(needed_train_df.loc[needed_train_df.game_play==game_play].frame.values)
     else:
-        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/test/backround_removal/{base}"
+        output_file_path = os.getcwd() + f"/nfl-player-contact-detection/test/frames/{base}"
         needed_frames = set(needed_test_df.loc[needed_test_df.game_play==game_play].frame.values)
     
     # Add 20 closest frames to needed frame (for temporal needs)
@@ -113,7 +125,7 @@ for filepath in tqdm(all_file_paths):
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         # Save frame
-        cv2.imwrite(output_file_path + "_" + str(request_frame) + ".jpeg", frame)
+        cv2.imwrite(output_file_path + "_" + str(request_frame) + ".jpg", frame)
         
     # Release the video object
     cap.release()
