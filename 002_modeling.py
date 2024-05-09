@@ -30,11 +30,11 @@ feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
 skips = 1 # How many steps between time steps 
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
-N = 100 # Number of plays
+N = 1000 # Number of plays
 positive_allocation_rate = 0.3
 
 image_size = feature_size
-input_size = 1000  # Output size of the Encoder's fully connected layer for lstm features
+input_size = 100  # Output size of the Encoder's fully connected layer for lstm features
 hidden_size = 64 # Size of lstm hidden layers
 num_layers = 1 # Number of lstm layers
 dropout = 0.1
