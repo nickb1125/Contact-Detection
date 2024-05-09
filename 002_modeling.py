@@ -93,8 +93,9 @@ for epoch in range(num_epochs):
     total_loss = 0
     total_samples = len(dataset)
     for batch_idx, (features, labels) in tqdm(enumerate(dataloader)):
+        print(f'Batch [{batch_idx+1}/{len(dataloader)}]')
         x1, x2, x3 = features
-        x1, x2, x3 = x1.to(device), x2.to(device), x3.to(device)
+        x1, x2, x3, labels = x1.to(device), x2.to(device), x3.to(device), labels.to(device)
 
         # Forward pass
         outputs = combined_model(x1, x2, x3)
