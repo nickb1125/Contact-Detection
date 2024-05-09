@@ -16,8 +16,11 @@ class Encoder(nn.Module):
         self.fc = nn.Linear(1000, 100)
 
     def forward(self, x):
+        print(x.shape)
         x = torch.relu(self.conv1(x))
+        print(x.shape)
         x = torch.relu(self.resnet(x))
+        print(x.shape)
         x = torch.relu(self.fc(x))
         x = x.view(x.size(0), -1)
         return x
