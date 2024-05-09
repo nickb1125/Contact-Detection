@@ -92,9 +92,6 @@ for filepath in tqdm(all_file_paths):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     fps = cap.get(cv2.CAP_PROP_FPS)
 
-    # Initialize an empty numpy array to store the frames
-    video_array = np.empty((num_frames, height, width), dtype=np.uint8)
-
     # Get information for save
     base = filepath.split("/")[-1].split(".")[0]
     try:
@@ -114,8 +111,10 @@ for filepath in tqdm(all_file_paths):
 
     # Loop through each frame and store it in the numpy array
     for request_frame in needed_frames:
-        cap.set(cv2.CAP_PROP_FRAME_COUNT, request_frame)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, request_frame)
         ret, frame = cap.read()
+        if not ret:
+            continue
         if backround_remove:
             orig_im_size = frame.shape[0:2]
             image = preprocess_image(frame, orig_im_size).to(device)

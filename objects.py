@@ -42,17 +42,53 @@ def postprocess_image(result: torch.Tensor, im_size: list)-> np.ndarray:
 
 def step_to_frame(step):
     return int(int(step)/10*59.95+5*59.95)
-    
-def read_video(id, view, type, needed_frames):
+
+def read_video(id, view, type, needed_frames, frames_saved=False, backround_removal=False):
     """Reads video to numpy array using Open-CV"""
-    filepath_bases = [f"nfl-player-contact-detection/{type}/frames/{id}_{view}_{frame}.jpg" for frame in needed_frames]
-    frames = []
-    for path in filepath_bases:
-        image = cv2.imread(path)  # Read image in BGR format
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        frames.append(image)
-    frames_tensor = np.stack(frames, axis=0)
-    return frames_tensor
+    if frames_saved:
+        filepath_bases = [f"nfl-player-contact-detection/{type}/frames/{id}_{view}_{frame}.jpg" for frame in needed_frames]
+        frames = []
+        for path in filepath_bases:
+            image = cv2.imread(path)  # Read image in BGR format
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            frames.append(image)
+        frames_tensor = np.stack(frames, axis=0)
+        return frames_tensor
+    
+    filepath = f"nfl-player-contact-detection/{type}/{id}_{view}.mp4"
+    # Open the video file
+    cap = cv2.VideoCapture(filepath)
+    
+    # Get video properties
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if needed_frames=="all":
+        video_array = np.empty((num_frames, height, width), dtype=np.uint8)
+        for i in range(num_frames):
+            ret, frame = cap.read()
+            if not ret:
+                break
+            video_array[i] = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+    else:
+        i=0
+        video_array = np.empty((len(needed_frames), height, width), dtype=np.uint8)
+        for request_frame in needed_frames:
+            if (request_frame >= num_frames) or (request_frame < 0):
+                video_array[i]=np.zeros((height, width))
+                continue
+            cap.set(cv2.CAP_PROP_POS_FRAMES, request_frame)
+            ret, frame = cap.read()
+            if not ret:
+                raise ValueError(f"Frame not returned for play {id} frame {request_frame}. There are {num_frames} frames.")
+            if frame.shape[0]>1:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            video_array[i]=frame
+            i+=1
+    # Release the video object
+    cap.release()
+    
+    return video_array
 
 def view_contact(video_array, helmet_mask):
     """Plots contact with helmet mask."""
@@ -168,7 +204,7 @@ class ContactDataset:
             pl.col("contact_id").is_in(merge_p1['contact_id'].to_numpy()))
         
         self.record_df = self.record_df.with_columns(
-            pl.col("step").apply(step_to_frame).cast(int).alias('frame'),
+            pl.col("step").map_elements(step_to_frame, return_dtype=pl.Int64).alias('frame'),
         )
         
         # Filter to balanced sample with proper play number
