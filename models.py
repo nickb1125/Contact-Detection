@@ -13,6 +13,8 @@ class Encoder(nn.Module):
             param.requires_grad = False
         for param in self.resnet.fc.parameters():
             param.requires_grad = True
+        for param in self.resnet.layer4.parameters():
+            param.requires_grad = True
         self.fc = nn.Linear(1000, 100)
 
     def forward(self, x):
