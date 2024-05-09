@@ -30,7 +30,7 @@ feature_size = 256 # Size of square input channels
 num_back_forward_steps = 1 # Number of forward and backward timesteps
 skips = 1 # How many steps between time steps 
 distance_cutoff = 5 # Yard cutoff to set contact prob to zero
-N = 5 # Number of plays
+N = 1000 # Number of plays
 positive_allocation_rate = 0.3
 
 
@@ -89,11 +89,11 @@ optimizer = optim.Adam(combined_model.parameters(), lr=learning_rate)
 print("---Training----")
 for epoch in range(num_epochs):
     # Training loop
+    print(f'----------Epoch [{epoch+1}/{num_epochs}]')
     combined_model.train()
     total_loss = 0
     total_samples = len(dataset)
     for batch_idx, (features, labels) in tqdm(enumerate(dataloader), total = len(dataloader)):
-        print(f'Batch [{batch_idx+1}/{len(dataloader)}]')
         x1, x2, x3 = features
         x1, x2, x3, labels = x1.to(device), x2.to(device), x3.to(device), labels.to(device)
 
