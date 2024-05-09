@@ -34,7 +34,7 @@ N = 100 # Number of plays
 positive_allocation_rate = 0.3
 
 image_size = feature_size
-input_size = 100  # Output size of the Encoder's fully connected layer for lstm features
+input_size = 1000  # Output size of the Encoder's fully connected layer for lstm features
 hidden_size = 64 # Size of lstm hidden layers
 num_layers = 1 # Number of lstm layers
 dropout = 0.1
