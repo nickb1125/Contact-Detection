@@ -70,11 +70,14 @@ print("---Loading Train Dataloader----")
 dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_only_labels.csv",
                       feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=N, pos_balance=positive_allocation_rate)
+dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 print("---Loading Val Dataloader----")
 val_dataset = ContactDataset(os.getcwd() + "/nfl-player-contact-detection/train_val_only_labels.csv",
                       feature_size=feature_size, num_back_forward_steps=num_back_forward_steps, 
                       skips=skips, distance_cutoff=distance_cutoff, N=int(N*val_size), pos_balance=positive_allocation_rate)
+val_dataset = DataLoader(dataset, batch_size=256, shuffle=True)
+
 
 print("---Initializing Model----")
 combined_model = ContactNet(image_size, input_size, hidden_size, num_layers, dropout)
